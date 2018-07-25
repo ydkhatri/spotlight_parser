@@ -432,7 +432,7 @@ class SpotlightStore:
             elif (num & 0x0C)==0x0C: extra = 6
             elif (num & 0x08)==0x08: extra = 5
             else: 
-                extra = 4;
+                extra = 4
                 use_lower_nibble = True
                 num -= 0xF0
         elif (num & 0xE0) == 0xE0: 
