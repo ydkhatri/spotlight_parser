@@ -26,7 +26,7 @@
 #                 /.Spotlight-V100/Store-V2/<UUID>/
 #
 # Usage        : spotlight_parser.py [-p OUTPUT_PREFIX] <path_to_database>  <output_folder>
-#                Example:  python.exe spotlight_parser.py c:\store.db  c:\store_output
+#                Example:  python.exe spotlight_parser.py c:\store  c:\store_output
 #
 # Send bugs and feedback to yogesh@swiftforensics.com
 #
