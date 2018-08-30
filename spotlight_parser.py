@@ -275,8 +275,11 @@ class FileMetaDataListing:
                         value = self.ReadDate()
                 elif value_type == 0x0E:
                     value = self.ReadStr()[0]
-                    if prop_name == u'kMDStoreUUID':
-                        value = binascii.hexlify(value[0])
+                    if prop_name != u'kMDStoreProperties':
+                        if len(value) == 1:
+                            value = binascii.hexlify(value[0])
+                        else:
+                            value = [binascii.hexlify(item) for item in value]
                 elif value_type == 0x0F:
                     value = self.ConvertUint32ToSigned(self.ReadVarSizeNum()[0])
                     if value < 0:
