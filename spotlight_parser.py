@@ -42,6 +42,7 @@ import datetime
 import os
 import sys
 import logging
+import sqlite3
 from enum import IntEnum
 
 __VERSION__ = '0.6'
@@ -62,7 +63,7 @@ class FileMetaDataListing:
         self.parent_id = 0 # inode for parent folder
         self.date_updated = None
         self.full_path = ''
-       
+
     def ReadFloat(self):
         num = struct.unpack("<f", self.data[self.pos : self.pos + 4])[0]
         self.pos += 4
@@ -160,11 +161,15 @@ class FileMetaDataListing:
             name = '------NONAME------'
         return name
 
-    def Print(self, file):
+    def Print(self, file, db_used = None, db_columns = None, db_values = None, db_columns_new = None):
         try:
             dashed_line = "-"*60
             info = u"Inode_Num --> {}\r\nFlags --> {}\r\nStore_ID --> {}\r\nParent_Inode_Num --> {}\r\nLast_Updated --> {}\r\n".format(self.id, self.flags, self.item_id, self.parent_id, self.ConvertEpochToUtcDateStr(self.date_updated))
-
+            if db_used != None:
+#                db_columns_new = db_columns_add
+                db_columns = ["Inode_Num", "Flags", "Store_ID", "Parent_Inode_Num", "Last_Updated"]
+                db_values = [self.id, self.flags, self.item_id, self.parent_id, self.ConvertEpochToUtcDateStr(self.date_updated)]
+            
             file.write(dashed_line + '\r\n' + info)
             for k, v in sorted(self.meta_data_dict.items()):
                 orig_debug = v
@@ -182,8 +187,15 @@ class FileMetaDataListing:
                             else:
                                 v = ', '.join([str(x) for x in v])
                     else: v = ''
+                if db_used != None:
+                    if unicode(k) not in db_columns:
+                        db_columns.append(unicode(k))
+                        db_values.append(unicode(v).encode('utf-8'))
+                    if unicode(k) not in db_columns_new:
+                        db_columns_new.append(unicode(k))
                 file.write((unicode(k) + u" --> " + unicode(v)).encode('utf-8'))
                 file.write('\r\n')
+            return db_columns, db_values, db_columns_new
         except Exception as ex:
             log.exception("Exception trying to print data : ")
 
@@ -378,6 +390,56 @@ class StoreBlock:
         self.unknown1 = struct.unpack("<I", data[24:28])[0]
         self.unknown2 = struct.unpack("<I", data[28:32])[0]
 
+class SQLiteDb:
+    def __init__(self, file_pointer):
+        self.db_file = file_pointer
+        self.CreateDatabase(self.db_file)
+        
+    def CreateDatabase(self, databaseFile):
+
+        self.con = sqlite3.connect(databaseFile)
+        self.con.text_factory = lambda x :unicode(x, 'utf-8', 'ignore')
+        # Create the table
+        self.con.execute("Pragma journal_mode=wal")
+        self.con.execute("Pragma page_size=16384")
+        self.con.execute(
+            "CREATE TABLE IF NOT EXISTS spotlight_data(Inode_Num int, flags int, store_id int, parent_inode_Num int, last_updated text)")
+
+    def Close(self):
+  
+        # We need to run commit or not all data is stored in the database.
+        self.con.commit()
+        self.con.close()
+    
+    def CreateBindVariables(self, number_of_columns):
+  
+        bind_variables = " ?"
+        for i in range(1, number_of_columns):
+           bind_variables = bind_variables + ", ?"
+        #bind_variables = bind_variables + ")"	   
+        return bind_variables
+  
+    def AddColumn(self, sql_statement, column_name):
+
+        try:
+            self.con.execute(sql_statement)    
+        except Exception as ex:
+            print ('Error adding column to table ==> ' + column_name)
+    
+    def InsertValues(self, column_definitions, column_values, num_columns):
+    
+        column_bind_values = self.CreateBindVariables(num_columns)
+
+        sql_query = u'insert into spotlight_data ( {0:s} ) values ( {1:s} )'.format(column_definitions, column_bind_values)
+
+        #print (sql_query)
+	
+        try:
+            self.con.execute(sql_query, column_values)
+        except Exception as ex:
+            print ("Excpetion is ==> " + str(ex))
+            print ("Error loading data into table " + str(sql_query) + " " + str(column_values))
+
 class SpotlightStore:
     def __init__(self, file_pointer):
         self.file = file_pointer
@@ -404,7 +466,7 @@ class SpotlightStore:
         self.indexes_1 = {}
         self.indexes_2 = {}
         self.block0 = None
-
+        
     def GetFileSize(self, file):
         '''Return size from an open file handle'''
         current_pos = file.tell()
@@ -555,8 +617,12 @@ class SpotlightStore:
         if hit and (hit[4] == md_item.date_updated): return True
         return False
 
-    def ParseMetadataBlocks(self, output_file, items, items_to_compare=None, process_items_func=None):
+    def ParseMetadataBlocks(self, output_file, items, sqlite_db, items_to_compare=None, process_items_func=None):
         # Index = [last_id_in_block, unknown1, offset_index, unknown2]
+        db_columns = []
+        db_values = []
+        db_columns_add = ["Inode_Num", "Flags", "Store_ID", "Parent_Inode_Num", "Last_Updated"]
+
         for index in self.block0.indexes:
             #go to offset and parse
             self.Seek(index[2] * 0x1000)
@@ -634,8 +700,16 @@ class SpotlightStore:
             if process_items_func:
                 process_items_func(items_in_block)
 
+            db_columns_new = db_columns_add[:]
             for md_item in items_in_block:
-                md_item.Print(output_file)
+                #md_item.Print(output_file, "Y", db_columns, db_values, db_columns_add)
+                (db_columns, db_values, db_columns_new) = md_item.Print(output_file, "Y", db_columns, db_values, db_columns_new)
+                if len(db_columns_add) != len(db_columns_new):
+                    for new_column in db_columns_new:
+                        if new_column not in db_columns_add:
+                            db_columns_add.append(new_column)
+                            sqlite_db.AddColumn("alter table spotlight_data add column " + new_column + " text;", new_column)
+                sqlite_db.InsertValues(", ".join(db_columns), db_values, len(db_columns))
 
     def ParseBlockSequence(self, initial_index, type, dictionary):
         '''Follow the sequence of next_block_index to parse all blocks in the chain'''
@@ -722,6 +796,7 @@ def ProcessStoreDb(input_file_path, output_path, file_name_prefix='store'):
     
     output_path_full_paths = os.path.join(output_folder, file_name_prefix + '_fullpaths.csv')
     output_path_data = os.path.join(output_folder, file_name_prefix + '_data.txt')
+    db_path = os.path.join(output_folder, file_name_prefix + '_db.db3')
 
     log.info('Processing ' + input_file_path)
     try:
@@ -730,9 +805,10 @@ def ProcessStoreDb(input_file_path, output_path, file_name_prefix='store'):
             with open(output_path_data, 'wb') as output_file:
                 log.info("Creating output file {}".format(output_path_full_paths))
                 with open (output_path_full_paths, 'wb') as output_paths_file:
+                    sqlite_db = SQLiteDb(db_path)
                     store = SpotlightStore(f)
                     store.ReadBlocksInSeq()
-                    store.ParseMetadataBlocks(output_file, items, None, None)
+                    store.ParseMetadataBlocks(output_file, items, sqlite_db, None, None)
 
                     output_paths_file.write("Inode_Number\tFull_Path\r\n")
                     for k,v in items.items():
@@ -741,6 +817,7 @@ def ProcessStoreDb(input_file_path, output_path, file_name_prefix='store'):
                             fullpath = RecursiveGetFullPath(v, items)
                             to_write = str(k) + '\t' + fullpath + '\r\n'
                             output_paths_file.write(to_write.encode('utf-8'))
+                sqlite_db.Close()
     except Exception as ex:
         log.exception('')
 
