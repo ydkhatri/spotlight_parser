@@ -35,7 +35,8 @@
 #
 
 from __future__ import print_function
-import struct
+
+import decimal
 import zlib
 import lz4.block
 import time
@@ -65,6 +66,14 @@ class FileMetaDataListing:
         self.parent_id = 0 # inode for parent folder
         self.date_updated = None
         self.full_path = ''
+
+    def convertPython3FloatStringToPython2(self, num):
+        if num == int(num):
+            return "{:.1f}".format(num)
+        else:
+            return "{:.12g}".format(num)
+        # convert to datetime
+        return epoch + datetime.timedelta(microseconds=us)
        
     def ReadFloat(self):
         num = struct.unpack("<f", self.data[self.pos : self.pos + 4])[0]
@@ -80,11 +89,12 @@ class FileMetaDataListing:
         '''Returns date as string'''
         # Date stored as 8 byte double, it is mac absolute time (2001 epoch)
         mac_abs_time = self.ReadDouble()
-        if mac_abs_time > 0: # Sometimes, a very large number that needs to be reinterpreted as signed int
+        old = None
+        if mac_abs_time > 0:  # Sometimes, a very large number that needs to be reinterpreted as signed int
             old = mac_abs_time
-            mac_abs_time = struct.unpack("<q", struct.pack("<Q", int(mac_abs_time)) )[0] # double to signed int64
-            if int(old) == mac_abs_time: # int(536198400.512156) == 536198400 = True
-                mac_abs_time = old # preserve extra precision after decimal point
+            mac_abs_time = struct.unpack("<q", struct.pack("<Q", int(mac_abs_time)))[0]  # double to signed int64
+            if int(old) == mac_abs_time:  # int(536198400.512156) == 536198400 = True
+                mac_abs_time = old  # preserve extra precision after decimal point
         try:
             return datetime.datetime(2001,1,1) + datetime.timedelta(seconds = mac_abs_time)
         except:
@@ -94,8 +104,8 @@ class FileMetaDataListing:
     def ConvertEpochToUtcDateStr(self, value):
         '''Convert Epoch microseconds timestamp to string'''
         try:
-            return datetime.datetime(1970, 1, 1) + datetime.timedelta(seconds=value/1000000.)
-        except:
+            return datetime.datetime(1970, 1, 1) + datetime.timedelta(seconds=value//1000000)
+        except Exception as e:
             pass
         return ""
     
@@ -107,27 +117,22 @@ class FileMetaDataListing:
 
     def ReadStr(self):
         '''Returns single string of data and bytes_read'''
-        string = ""
         size, pos = self.ReadVarSizeNum()
-        for x in range(pos, size + pos):
-            string += str(self.data[self.pos])
-            self.pos += 1
+        string = self.data[self.pos:self.pos + size]
+        if string[-1] == 0:
+            string = string[:-1] # null character
+        if string.endswith(b'\x16\x02'):
+            string = string[:-2]
+        self.pos += size
         return string, size + pos
 
     def ReadStrings(self):
         '''Returns array of strings found in data and bytes_read'''
-        strings = []
-        string = ""
         size, pos = self.ReadVarSizeNum()
-        for x in range(pos, size + pos):
-            if self.data[self.pos] != b"\x00":
-                string += str(self.data[self.pos])
-            else:
-                strings.append(string)
-                string = ""
-            self.pos += 1
-        if string: # sometimes no null terminator!
-            strings.append(string)
+        all_strings_in_one = self.data[self.pos:self.pos+size]
+        strings = [x for x in all_strings_in_one.split(b'\x00') if x != b'']
+        strings = [x[:-2] if x.endswith(b'\x16\x02') else x for x in strings]
+        self.pos += size
         return strings, size + pos
 
     def ReadSingleByte(self):
@@ -143,6 +148,7 @@ class FileMetaDataListing:
         self.pos += count
         return many
 
+    # No usages
     def ReadManyBytesReturnHexString(self, count, debug_dont_advance = False):
         '''does not increment file pointer'''
         many = self.ReadManyBytes(count, debug_dont_advance)
@@ -155,38 +161,58 @@ class FileMetaDataListing:
         name = self.meta_data_dict.get('_kMDItemFileName', None)
         if name == None:
             name = self.meta_data_dict.get('kMDItemDisplayName')
-        if name: 
-            name = name[0]
-            if name.endswith('\x16\x02'):
-                name = name[:-2]
+        if name:
+            if type(name) == list:
+                name = name[0]
+            if '\x16\x02' in name:
+                name = name.split('\x16\x02')[0]
         else:
             name = '------NONAME------'
         return name
+
+    def StringifyValue(self, v):
+        if type(v) == list:
+            if v:
+                if len(v) == 1:
+                    v = v[0]
+                    if type(v) == str:
+                        if '\x16\x02' in v:
+                            v = v.split('\x16\x02')[0]
+                    elif type(v) == bytes:
+                        v = v.decode('utf-8')
+                    elif type(v) == float:
+                        v = self.convertPython3FloatStringToPython2(v)
+                else:
+                    if type(v[0]) == str:
+                        v = ', '.join(v)
+                    elif type(v[0]) == float:
+                        v = ', '.join([self.convertPython3FloatStringToPython2(x) for x in v])
+                    else:
+                        if sys.version_info[0] >= 3:
+                            v = ', '.join([str(x) for x in v])
+                        else:
+                            v = ', '.join([unicode(x) for x in v])
+            else:
+                v = ''
+        elif type(v) == float:
+            v = self.convertPython3FloatStringToPython2(v)
+        return v
 
     def Print(self, file):
         try:
             dashed_line = "-"*60
             info = u"Inode_Num --> {}\r\nFlags --> {}\r\nStore_ID --> {}\r\nParent_Inode_Num --> {}\r\nLast_Updated --> {}\r\n".format(self.id, self.flags, self.item_id, self.parent_id, self.ConvertEpochToUtcDateStr(self.date_updated))
 
-            file.write(dashed_line + '\r\n' + info)
+            file.write((dashed_line + '\r\n' + info).encode('utf-8'))
             for k, v in sorted(self.meta_data_dict.items()):
                 orig_debug = v
-                if type(v) == list:
-                    if v:
-                        if len(v) == 1:
-                            v = v[0]
-                            if type(v) in (str, unicode):
-                                if v.endswith('\x16\x02'):
-                                    v = v[:-2]
-                            if type(v) == str: v = v.decode('utf-8')
-                        else:
-                            if type(v[0]) == str:
-                                v = ', '.join([x.decode('utf-8') for x in v]) # removes the 'u' for unicode in output
-                            else:
-                                v = ', '.join([str(x) for x in v])
-                    else: v = ''
-                file.write((unicode(k) + u" --> " + unicode(v)).encode('utf-8'))
-                file.write('\r\n')
+                v = self.StringifyValue(v)
+
+                if sys.version_info[0] >= 3:
+                    file.write((str(k) + u" --> " + str(v)).encode('utf-8'))
+                else:
+                    file.write((unicode(k) + u" --> " + unicode(v)).encode('utf-8'))
+                file.write('\r\n'.encode('utf-8'))
         except Exception as ex:
             log.exception("Exception trying to print data : ")
 
@@ -262,23 +288,30 @@ class FileMetaDataListing:
                         value = self.ReadVarSizeNum()[0]
                 elif value_type == 9:
                     if prop_type & 2 == 2:
-                        num_values = (self.ReadVarSizeNum()[0])/4
+                        num_values = (self.ReadVarSizeNum()[0])//4
                         floats = [self.ReadFloat() for x in range(num_values)]
                         value = floats
                     else:
                         value = self.ReadFloat()
                 elif value_type == 0x0A:
                     if prop_type & 2 == 2:
-                        num_values = (self.ReadVarSizeNum()[0])/8
+                        num_values = (self.ReadVarSizeNum()[0])//8
                         doubles = [self.ReadDouble() for x in range(num_values)]
                         value = doubles
                     else:
                         value = self.ReadDouble()
                 elif value_type == 0x0B:
-                    value = self.ReadStrings()[0]
+                    value = [x.decode('utf-8', 'backslashreplace') for x in self.ReadStrings()[0]]
+                    if prop_type & 2 != 2:
+                        if len(value) == 0:
+                            value = ''
+                        elif len(value) == 1:
+                            value = value[0]
+                        else:
+                            log.warning('String was multivalue without multivalue bit set')
                 elif value_type == 0x0C:
                     if prop_type & 2 == 2:
-                        num_dates = (self.ReadVarSizeNum()[0])/8
+                        num_dates = (self.ReadVarSizeNum()[0])//8
                         dates = []
                         for x in range(num_dates):
                             dates.append(self.ReadDate())
@@ -287,17 +320,22 @@ class FileMetaDataListing:
                         value = self.ReadDate()
                 elif value_type == 0x0E:
                     if prop_type & 2 == 2:
-                        value = self.ReadStrings()[0]
+                        value = [x for x in self.ReadStrings()[0]]
                     else:
                         value = self.ReadStr()[0]
                     if prop_name != u'kMDStoreProperties':
                         if type(value) == list:
                             if len(value) == 1:
-                                value = binascii.hexlify(value[0]).upper()
+                                value = binascii.hexlify(value[0]).decode('ascii').upper()
                             else:
-                                value = [binascii.hexlify(item).upper() for item in value]
+                                value = [binascii.hexlify(item).decode('ascii').upper() for item in value]
                         else: # single string
-                            value = binascii.hexlify(value).upper()
+                            value = binascii.hexlify(value).decode('ascii').upper()
+                    else:
+                        if type(value) == list:
+                            value = [x.decode('utf-8', 'backslashreplace') for x in value]
+                        else:
+                            value = value.decode('utf-8', 'backslashreplace')
                 elif value_type == 0x0F:
                     value = self.ConvertUint32ToSigned(self.ReadVarSizeNum()[0])
                     if value < 0:
@@ -311,9 +349,12 @@ class FileMetaDataListing:
                             else:
                                 for v in value:
                                     cat = categories.get(v, 'error getting category for index={}'.format(v))
-                                    if cat.endswith('\x16\x02'):
-                                        cat = cat[:-2]
-                                    value = cat
+                                    all_translations = cat.split('\x16\x02')
+                                    if len(all_translations) > 2:
+                                        log.warning('Encountered more than one control sequence in single translation'
+                                                    'string.')
+                                        log.debug('Found this list: {}', other)
+                                    value = all_translations[0]
                                     break # only get first, rest are language variants!
                         elif prop_type & 0x2 == 0x2: #== 0x4A: # ContentTypeTree ItemUserTags
                             value = indexes_1.get(value, None)
@@ -333,6 +374,8 @@ class FileMetaDataListing:
                     if prop_name != 'kMDStoreAccumulatedSizes':
                         log.info("Pos={}, Unknown value_type {}, PROPERTY={}, PROP_TYPE={} ..RETURNING!".format(filepos, value_type, prop_name, prop_type))
                     return
+                if prop_name in self.meta_data_dict:
+                    log.warning('Spotlight property {} had more than one entry for inode {}'.format(prop_name, self.id))
                 self.meta_data_dict[prop_name] = value
                 
 
@@ -443,40 +486,38 @@ class SpotlightStore:
     @staticmethod
     def ReadVarSizeNum(data):
         '''Returns num and bytes_read'''
-        num = struct.unpack("<B", data[0:1])[0]
+        first_byte = struct.unpack("B", data[0:1])[0]
         extra = 0
         use_lower_nibble = True
-        if num == 0:
-            return num, 1
-        elif (num & 0xF0) == 0xF0: # 4 or more
+        if first_byte == 0:
+            return 0, 1
+        elif (first_byte & 0xF0) == 0xF0: # 4 or more
             use_lower_nibble = False
-            if (num & 0x0F)==0x0F: extra = 8
-            elif (num & 0x0E)==0x0E: extra = 7
-            elif (num & 0x0C)==0x0C: extra = 6
-            elif (num & 0x08)==0x08: extra = 5
+            if (first_byte & 0x0F)==0x0F: extra = 8
+            elif (first_byte & 0x0E)==0x0E: extra = 7
+            elif (first_byte & 0x0C)==0x0C: extra = 6
+            elif (first_byte & 0x08)==0x08: extra = 5
             else: 
                 extra = 4
                 use_lower_nibble = True
-                num -= 0xF0
-        elif (num & 0xE0) == 0xE0: 
+                first_byte -= 0xF0
+        elif (first_byte & 0xE0) == 0xE0:
             extra = 3
-            num -= 0xE0
-        elif (num & 0xC0) == 0xC0: 
+            first_byte -= 0xE0
+        elif (first_byte & 0xC0) == 0xC0:
             extra = 2
-            num -=0xC0
-        elif (num & 0x80) == 0x80: 
+            first_byte -=0xC0
+        elif (first_byte & 0x80) == 0x80:
             extra = 1
-            num -= 0x80
+            first_byte -= 0x80
 
         if extra:
-            num2 = 0
-            for x in range(1, extra + 1):
-                num_x = struct.unpack(">B", data[x : x+1])[0]
-                num2 += (num_x << (extra - x)*8)
+            num = 0
+            num += sum(struct.unpack('B', data[x:x+1])[0] << (extra - x) * 8 for x in range(1, extra + 1))
             if use_lower_nibble:
-                num2 = num2 + ((num) << (extra*8))
-            return num2, extra + 1
-        return num, extra + 1
+                num = num + (first_byte << (extra*8))
+            return num, extra + 1
+        return first_byte, extra + 1
 
     def ParseProperties(self, block):
         data = block.data
@@ -485,14 +526,9 @@ class SpotlightStore:
         while pos < size:
             index, value_type, prop_type = struct.unpack("<IBB", data[pos : pos+6])
             pos += 6
-            name = ""
-            while pos < size:
-                ch = data[pos]
-                pos += 1
-                if ch == b'\x00': 
-                    break
-                name += str(ch)
-            self.properties[index] = [name.decode('utf8'), prop_type, value_type]
+            name = data[pos:pos+size].split(b'\x00')[0]
+            pos += len(name) + 1 if len(name) < size else size
+            self.properties[index] = [name.decode('utf-8', 'backslashreplace'), prop_type, value_type]
 
     def ParseCategories(self, block):
         data = block.data
@@ -501,19 +537,14 @@ class SpotlightStore:
         while pos < size:
             index = struct.unpack("<I", data[pos : pos+4])[0]
             pos += 4
-            name = ""
-            while pos < size:
-                ch = data[pos]
-                pos += 1
-                if ch == b'\x00': 
-                    break
-                name += str(ch)
+            name = data[pos:pos+size].split(b'\x00')[0]
+            pos += len(name) + 1 if len(name) < size else size
             # sanity check
             temp = self.categories.get(index, None)
             if temp != None:
                 log.error("Error, category {} already exists!!".format(temp))
             # end check
-            self.categories[index] = name.decode('utf8')
+            self.categories[index] = name.decode('utf-8')
 
     def ParseIndexes(self, block, dictionary):
         data = block.data
@@ -528,8 +559,8 @@ class SpotlightStore:
             padding = index_size % 4
             pos += padding
 
-            index_size = 4*int(index_size/4)
-            ids = struct.unpack("<" + str(index_size/4) + "I", data[pos:pos + index_size])
+            index_size = 4*int(index_size//4)
+            ids = struct.unpack("<" + str(index_size//4) + "I", data[pos:pos + index_size])
             pos += index_size
             
             # sanity check
@@ -551,7 +582,7 @@ class SpotlightStore:
         elif block.block_type == BlockType.INDEX:
             self.ParseIndexes(block, dictionary)
         else:
-            log.info ('Unknown block type encountered: {0x:.2X}'.format(block.block_type))
+            log.info ('Unknown block type encountered: 0x{:.2X}'.format(block.block_type))
     
     def ItemExistsInDictionary(self, items_to_compare, md_item):
         '''Check if md_item exists in the dictionary'''
@@ -562,6 +593,7 @@ class SpotlightStore:
 
     def ParseMetadataBlocks(self, output_file, items, items_to_compare=None, process_items_func=None):
         # Index = [last_id_in_block, offset_index, dest_block_size]
+        results = {}
         for index in self.block0.indexes:
             #go to offset and parse
             self.Seek(index[1] * 0x1000)
@@ -569,7 +601,7 @@ class SpotlightStore:
             compressed_block = StoreBlock(block_data)
             if compressed_block.block_type & 0xFF != BlockType.METADATA:
                 raise Exception('Expected METADATA block, Unknown block type encountered: 0x{:X}'.format(compressed_block.block_type))
-            log.debug ("Trying to decompress compressed block @ {:X}".format(index[1] * 0x1000 + 20))
+            log.debug ("Trying to decompress compressed block @ 0x{:X}".format(index[1] * 0x1000 + 20))
 
             try:
                 if compressed_block.block_type & 0x1000 == 0x1000: # LZ4 compression
@@ -601,7 +633,7 @@ class SpotlightStore:
                     #compressed_size = compressed_block.logical_size - 20
                     uncompressed = zlib.decompress(block_data[20:compressed_block.logical_size])
             except Exception as ex:
-                log.error("Decompression error for block @ {:X}\r\n{}".format(index[1] * 0x1000 + 20, str(ex)))
+                log.error("Decompression error for block @ 0x{:X}\r\n{}".format(index[1] * 0x1000 + 20, str(ex)))
                 if len(uncompressed) == 0: continue
             
             ## Now process it!!
@@ -630,8 +662,8 @@ class SpotlightStore:
                                     if existing_item[2] != name:
                                         log.warning("Repeat item has different name, existing={}, new={}".format(existing_item[2], name))
                         else: # Not adding repeat elements
-                            items[md_item.id] = [md_item.id, md_item.parent_id, md_item.GetFileName().decode('utf-8'), '', md_item.date_updated] # id, parent_id, name, path, date
-                except:
+                            items[md_item.id] = [md_item.id, md_item.parent_id, md_item.GetFileName(), None, md_item.date_updated] # id, parent_id, name, path, date
+                except Exception as e:
                     log.exception('Error trying to process item @ block {:X} offset {}'.format(index[1] * 0x1000 + 20, pos))
                 pos += item_size + 4
                 count += 1
@@ -696,6 +728,7 @@ def RecursiveGetFullPath(item, items_list):
     if item[0] == 1: #is this plist?
         return 'plist'
     name = item[2]
+
     if item[0] == 2: # This is root
         if name == '':
             name = '/'
@@ -704,50 +737,62 @@ def RecursiveGetFullPath(item, items_list):
     search_id = item[1]
 
     if search_id == 0:
-        search_id = 2 # root
-    ret_path = ''
+        item[3] = name
+        return '..NULL-INODE../' + name
+
     found_item = items_list.get(search_id, None)
 
-    if found_item != None:
-        parent_path = RecursiveGetFullPath(found_item, items_list)
-        ret_path = (parent_path + '/' + name) if parent_path != '/' else (parent_path + name)
-        found_item[3] = parent_path
-    elif search_id == 2: # root
-        ret_path = ('/' + name) if name else '/'
+    if search_id == 2:
+        root_name = found_item if found_item else '/'
+        ret_path = (root_name + name) if name else root_name
     else:
-        log.debug ('Err, could not find path for id {} '.format(search_id))
-        ret_path = '..NOT-FOUND../' + name
+        if found_item:
+            parent_path = RecursiveGetFullPath(found_item, items_list)
+            ret_path = (parent_path + '/' + name) if parent_path != '/' else (parent_path + name)
+            found_item[3] = parent_path
+        else:
+            log.debug ('Err, could not find path for id {} '.format(search_id))
+            ret_path = '..NOT-FOUND../' + name
     return ret_path
 
-def ProcessStoreDb(input_file_path, output_path, file_name_prefix='store'):
+def ProcessStoreDb(input_file, output_path='unused', file_name_prefix='store', is_file_obj=False):
     '''Main processing function'''
 
     items = {}
     time_processing_started = time.time()
-    
+
     output_path_full_paths = os.path.join(output_folder, file_name_prefix + '_fullpaths.csv')
     output_path_data = os.path.join(output_folder, file_name_prefix + '_data.txt')
 
-    log.info('Processing ' + input_file_path)
+    log.info('Processing ' + input_file)
     try:
-        with open(input_file_path, 'rb') as f:
-            log.info("Creating output file {}".format(output_path_data))
-            with open(output_path_data, 'wb') as output_file:
-                log.info("Creating output file {}".format(output_path_full_paths))
-                with open (output_path_full_paths, 'wb') as output_paths_file:
-                    store = SpotlightStore(f)
-                    store.ReadBlocksInSeq()
-                    store.ParseMetadataBlocks(output_file, items, None, None)
+        f = open(input_file, 'rb')
 
-                    output_paths_file.write("Inode_Number\tFull_Path\r\n")
-                    for k,v in items.items():
-                        name = v[2]
-                        if name:
-                            fullpath = RecursiveGetFullPath(v, items)
-                            to_write = str(k) + '\t' + fullpath + '\r\n'
-                            output_paths_file.write(to_write.encode('utf-8'))
+        store = SpotlightStore(f)
+        store.ReadBlocksInSeq()
+
+        log.info("Creating output file {}".format(output_path_data))
+
+        with open(output_path_data, 'wb') as output_file:
+            store.ParseMetadataBlocks(output_file, items, None, None)
+
+        lines = []
+        for k, v in items.items():
+            name = v[2]
+            if name:
+                fullpath = RecursiveGetFullPath(v, items)
+                lines.append(str(k) + '\t' + fullpath + '\r\n')
+
+        log.info("Creating output file {}".format(output_path_full_paths))
+
+        with open(output_path_full_paths, 'wb') as output_paths_file:
+            output_paths_file.write("Inode_Number\tFull_Path\r\n".encode('utf-8'))
+            for line in lines:
+                    output_paths_file.write(line.encode('utf-8'))
     except Exception as ex:
         log.exception('')
+    finally:
+        f.close()
 
     time_processing_ended = time.time()
     run_time = time_processing_ended - time_processing_started
@@ -790,5 +835,3 @@ if __name__ == "__main__":
         sys.exit()
 
     ProcessStoreDb(args.input_path, output_folder, output_file_prefix)
-
- 
