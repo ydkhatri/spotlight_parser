@@ -68,6 +68,7 @@ class FileMetaDataListing:
         self.full_path = ''
 
     def convertPython3FloatStringToPython2(self, num):
+        """ Try to keep formatting consistent between Python 2 and Python 3 """
         if num == int(num):
             return "{:.1f}".format(num)
         else:
@@ -105,7 +106,7 @@ class FileMetaDataListing:
         '''Convert Epoch microseconds timestamp to string'''
         try:
             return datetime.datetime(1970, 1, 1) + datetime.timedelta(seconds=value//1000000)
-        except Exception as e:
+        except:
             pass
         return ""
     
@@ -157,17 +158,17 @@ class FileMetaDataListing:
 
     def GetFileName(self):
         if self.meta_data_dict.get('_kStoreMetadataVersion', None) != None: # plist, not metadata
-            return '------PLIST------'
+            return b'------PLIST------'
         name = self.meta_data_dict.get('_kMDItemFileName', None)
         if name == None:
             name = self.meta_data_dict.get('kMDItemDisplayName')
         if name:
             if type(name) == list:
                 name = name[0]
-            if '\x16\x02' in name:
-                name = name.split('\x16\x02')[0]
+            if b'\x16\x02' in name:
+                name = name.split(b'\x16\x02')[0]
         else:
-            name = '------NONAME------'
+            name = b'------NONAME------'
         return name
 
     def StringifyValue(self, v):
@@ -175,27 +176,23 @@ class FileMetaDataListing:
             if v:
                 if len(v) == 1:
                     v = v[0]
-                    if type(v) == str:
-                        if '\x16\x02' in v:
-                            v = v.split('\x16\x02')[0]
-                    elif type(v) == bytes:
-                        v = v.decode('utf-8')
-                    elif type(v) == float:
+                    if type(v) == float:
                         v = self.convertPython3FloatStringToPython2(v)
                 else:
-                    if type(v[0]) == str:
-                        v = ', '.join(v)
-                    elif type(v[0]) == float:
+                    if type(v[0]) == float:
                         v = ', '.join([self.convertPython3FloatStringToPython2(x) for x in v])
+                    elif type(v[0]) not in (bytes, str):
+                        v = ', '.join([str(x) for x in v])
                     else:
-                        if sys.version_info[0] >= 3:
-                            v = ', '.join([str(x) for x in v])
-                        else:
-                            v = ', '.join([unicode(x) for x in v])
+                        v = b', '.join(v)
             else:
-                v = ''
+                v = b''
         elif type(v) == float:
             v = self.convertPython3FloatStringToPython2(v)
+        if type(v) not in (bytes, str):
+            v = str(v)
+        if type(v) == bytes:
+            v = v.decode('utf-8')
         return v
 
     def Print(self, file):
@@ -207,12 +204,8 @@ class FileMetaDataListing:
             for k, v in sorted(self.meta_data_dict.items()):
                 orig_debug = v
                 v = self.StringifyValue(v)
-
-                if sys.version_info[0] >= 3:
-                    file.write((str(k) + u" --> " + str(v)).encode('utf-8'))
-                else:
-                    file.write((unicode(k) + u" --> " + unicode(v)).encode('utf-8'))
-                file.write('\r\n'.encode('utf-8'))
+                file.write((k + u" --> " + v).encode('utf-8'))
+                file.write(b'\r\n')
         except Exception as ex:
             log.exception("Exception trying to print data : ")
 
@@ -301,7 +294,7 @@ class FileMetaDataListing:
                     else:
                         value = self.ReadDouble()
                 elif value_type == 0x0B:
-                    value = [x.decode('utf-8', 'backslashreplace') for x in self.ReadStrings()[0]]
+                    value = self.ReadStrings()[0]
                     if prop_type & 2 != 2:
                         if len(value) == 0:
                             value = ''
@@ -320,7 +313,7 @@ class FileMetaDataListing:
                         value = self.ReadDate()
                 elif value_type == 0x0E:
                     if prop_type & 2 == 2:
-                        value = [x for x in self.ReadStrings()[0]]
+                        value = self.ReadStrings()[0]
                     else:
                         value = self.ReadStr()[0]
                     if prop_name != u'kMDStoreProperties':
@@ -331,11 +324,6 @@ class FileMetaDataListing:
                                 value = [binascii.hexlify(item).decode('ascii').upper() for item in value]
                         else: # single string
                             value = binascii.hexlify(value).decode('ascii').upper()
-                    else:
-                        if type(value) == list:
-                            value = [x.decode('utf-8', 'backslashreplace') for x in value]
-                        else:
-                            value = value.decode('utf-8', 'backslashreplace')
                 elif value_type == 0x0F:
                     value = self.ConvertUint32ToSigned(self.ReadVarSizeNum()[0])
                     if value < 0:
@@ -349,7 +337,7 @@ class FileMetaDataListing:
                             else:
                                 for v in value:
                                     cat = categories.get(v, 'error getting category for index={}'.format(v))
-                                    all_translations = cat.split('\x16\x02')
+                                    all_translations = cat.split(b'\x16\x02')
                                     if len(all_translations) > 2:
                                         log.warning('Encountered more than one control sequence in single translation'
                                                     'string.')
@@ -544,7 +532,7 @@ class SpotlightStore:
             if temp != None:
                 log.error("Error, category {} already exists!!".format(temp))
             # end check
-            self.categories[index] = name.decode('utf-8')
+            self.categories[index] = name
 
     def ParseIndexes(self, block, dictionary):
         data = block.data
@@ -662,8 +650,8 @@ class SpotlightStore:
                                     if existing_item[2] != name:
                                         log.warning("Repeat item has different name, existing={}, new={}".format(existing_item[2], name))
                         else: # Not adding repeat elements
-                            items[md_item.id] = [md_item.id, md_item.parent_id, md_item.GetFileName(), None, md_item.date_updated] # id, parent_id, name, path, date
-                except Exception as e:
+                            items[md_item.id] = [md_item.id, md_item.parent_id, md_item.GetFileName().decode('utf-8'), None, md_item.date_updated] # id, parent_id, name, path, date
+                except:
                     log.exception('Error trying to process item @ block {:X} offset {}'.format(index[1] * 0x1000 + 20, pos))
                 pos += item_size + 4
                 count += 1
@@ -755,7 +743,7 @@ def RecursiveGetFullPath(item, items_list):
             ret_path = '..NOT-FOUND../' + name
     return ret_path
 
-def ProcessStoreDb(input_file, output_path='unused', file_name_prefix='store', is_file_obj=False):
+def ProcessStoreDb(input_file, output_path='unused', file_name_prefix='store'):
     '''Main processing function'''
 
     items = {}
@@ -776,19 +764,17 @@ def ProcessStoreDb(input_file, output_path='unused', file_name_prefix='store', i
         with open(output_path_data, 'wb') as output_file:
             store.ParseMetadataBlocks(output_file, items, None, None)
 
-        lines = []
-        for k, v in items.items():
-            name = v[2]
-            if name:
-                fullpath = RecursiveGetFullPath(v, items)
-                lines.append(str(k) + '\t' + fullpath + '\r\n')
-
         log.info("Creating output file {}".format(output_path_full_paths))
 
         with open(output_path_full_paths, 'wb') as output_paths_file:
             output_paths_file.write("Inode_Number\tFull_Path\r\n".encode('utf-8'))
-            for line in lines:
-                    output_paths_file.write(line.encode('utf-8'))
+            for k, v in items.items():
+                name = v[2]
+                if name:
+                    fullpath = RecursiveGetFullPath(v, items)
+                    to_write = str(k) + '\t' + fullpath + '\r\n'
+                    output_paths_file.write(to_write.encode('utf-8'))
+
     except Exception as ex:
         log.exception('')
     finally:
