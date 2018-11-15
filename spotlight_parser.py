@@ -89,12 +89,11 @@ class FileMetaDataListing:
         '''Returns date as string'''
         # Date stored as 8 byte double, it is mac absolute time (2001 epoch)
         mac_abs_time = self.ReadDouble()
-        old = None
-        if mac_abs_time > 0:  # Sometimes, a very large number that needs to be reinterpreted as signed int
+        if mac_abs_time > 0: # Sometimes, a very large number that needs to be reinterpreted as signed int
             old = mac_abs_time
-            mac_abs_time = struct.unpack("<q", struct.pack("<Q", int(mac_abs_time)))[0]  # double to signed int64
-            if int(old) == mac_abs_time:  # int(536198400.512156) == 536198400 = True
-                mac_abs_time = old  # preserve extra precision after decimal point
+            mac_abs_time = struct.unpack("<q", struct.pack("<Q", int(mac_abs_time)) )[0] # double to signed int64
+            if int(old) == mac_abs_time: # int(536198400.512156) == 536198400 = True
+                mac_abs_time = old # preserve extra precision after decimal point
         try:
             return datetime.datetime(2001,1,1) + datetime.timedelta(seconds = mac_abs_time)
         except:
@@ -104,7 +103,7 @@ class FileMetaDataListing:
     def ConvertEpochToUtcDateStr(self, value):
         '''Convert Epoch microseconds timestamp to string'''
         try:
-            return datetime.datetime(1970, 1, 1) + datetime.timedelta(seconds=value//1000000)
+            return datetime.datetime(1970, 1, 1) + datetime.timedelta(seconds=value/1000000.)
         except:
             pass
         return ""
@@ -742,7 +741,7 @@ def RecursiveGetFullPath(item, items_list):
             ret_path = '..NOT-FOUND../' + name
     return ret_path
 
-def ProcessStoreDb(input_file, output_path='unused', file_name_prefix='store'):
+def ProcessStoreDb(input_file_path, output_path='unused', file_name_prefix='store'):
     '''Main processing function'''
 
     items = {}
@@ -751,9 +750,9 @@ def ProcessStoreDb(input_file, output_path='unused', file_name_prefix='store'):
     output_path_full_paths = os.path.join(output_folder, file_name_prefix + '_fullpaths.csv')
     output_path_data = os.path.join(output_folder, file_name_prefix + '_data.txt')
 
-    log.info('Processing ' + input_file)
+    log.info('Processing ' + input_file_path)
     try:
-        f = open(input_file, 'rb')
+        f = open(input_file_path, 'rb')
 
         store = SpotlightStore(f)
         store.ReadBlocksInSeq()
