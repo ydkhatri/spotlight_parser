@@ -741,7 +741,7 @@ def RecursiveGetFullPath(item, items_list):
             ret_path = '..NOT-FOUND../' + name
     return ret_path
 
-def ProcessStoreDb(input_file_path, output_path='unused', file_name_prefix='store'):
+def ProcessStoreDb(input_file_path, output_path, file_name_prefix='store'):
     '''Main processing function'''
 
     items = {}
