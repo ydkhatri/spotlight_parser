@@ -36,7 +36,6 @@
 
 from __future__ import print_function
 
-import decimal
 import zlib
 import lz4.block
 import time
