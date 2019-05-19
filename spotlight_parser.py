@@ -17,8 +17,8 @@
 #
 # Script Name  : spotlight_parser.py
 # Author       : Yogesh Khatri
-# Last Updated : 10/16/2018
-# Requirement  : Python 2.7 and modules ( lz4, enum34 )
+# Last Updated : 05/18/2019
+# Requirement  : Python (2 or 3) and modules ( lz4, enum34 )
 #                Dependencies can be installed using the command 'pip install lz4 enum34' 
 # 
 # Purpose      : Parse the Spotlight store.db or .store.db file from mac OSX
@@ -30,6 +30,8 @@
 #
 # Usage        : spotlight_parser.py [-p OUTPUT_PREFIX] <path_to_database>  <output_folder>
 #                Example:  python.exe spotlight_parser.py c:\store  c:\store_output
+#
+# Ack          : M Bartle for most of the python3 porting
 #
 # Send bugs and feedback to yogesh@swiftforensics.com
 #
@@ -47,7 +49,7 @@ import sys
 import logging
 from enum import IntEnum
 
-__VERSION__ = '0.7'
+__VERSION__ = '0.8'
 
 log = logging.getLogger('SPOTLIGHT_PARSER')
 
@@ -72,8 +74,6 @@ class FileMetaDataListing:
             return "{:.1f}".format(num)
         else:
             return "{:.12g}".format(num)
-        # convert to datetime
-        return epoch + datetime.timedelta(microseconds=us)
        
     def ReadFloat(self):
         num = struct.unpack("<f", self.data[self.pos : self.pos + 4])[0]
@@ -579,7 +579,6 @@ class SpotlightStore:
 
     def ParseMetadataBlocks(self, output_file, items, items_to_compare=None, process_items_func=None):
         # Index = [last_id_in_block, offset_index, dest_block_size]
-        results = {}
         for index in self.block0.indexes:
             #go to offset and parse
             self.Seek(index[1] * 0x1000)
@@ -662,6 +661,9 @@ class SpotlightStore:
 
     def ParseBlockSequence(self, initial_index, type, dictionary):
         '''Follow the sequence of next_block_index to parse all blocks in the chain'''
+        if initial_index == 0:
+            log.warning('initial_index for block type 0x{:X} was invalid(zero), skipping it!'.format(type))
+            return
         self.Seek(initial_index * 0x1000)
         block_data = self.ReadFromFile(self.block_size)
         block = StoreBlock(block_data)
@@ -714,7 +716,6 @@ def RecursiveGetFullPath(item, items_list):
     if item[0] == 1: #is this plist?
         return 'plist'
     name = item[2]
-
     if item[0] == 2: # This is root
         if name == '':
             name = '/'
@@ -723,22 +724,19 @@ def RecursiveGetFullPath(item, items_list):
     search_id = item[1]
 
     if search_id == 0:
-        item[3] = name
-        return '..NULL-INODE../' + name
-
+        search_id = 2 # root
+    ret_path = ''
     found_item = items_list.get(search_id, None)
 
-    if search_id == 2:
-        root_name = found_item if found_item else '/'
-        ret_path = (root_name + name) if name else root_name
+    if found_item != None:
+        parent_path = RecursiveGetFullPath(found_item, items_list)
+        ret_path = (parent_path + '/' + name) if parent_path != '/' else (parent_path + name)
+        found_item[3] = parent_path
+    elif search_id == 2: # root
+        ret_path = ('/' + name) if name else '/'
     else:
-        if found_item:
-            parent_path = RecursiveGetFullPath(found_item, items_list)
-            ret_path = (parent_path + '/' + name) if parent_path != '/' else (parent_path + name)
-            found_item[3] = parent_path
-        else:
-            log.debug ('Err, could not find path for id {} '.format(search_id))
-            ret_path = '..NOT-FOUND../' + name
+        log.debug ('Err, could not find path for id {} '.format(search_id))
+        ret_path = '..NOT-FOUND../' + name
     return ret_path
 
 def ProcessStoreDb(input_file_path, output_path, file_name_prefix='store'):
