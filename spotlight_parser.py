@@ -20,12 +20,15 @@
 # Last Updated : 05/18/2019
 # Requirement  : Python (2 or 3) and modules ( lz4, enum34 )
 #                Dependencies can be installed using the command 'pip install lz4 enum34' 
+#                You will also need to install the lzfse decompression library. Follow the 
+#                instructions here (https://github.com/ydkhatri/mac_apt/tree/master/Libraries_For_Windows)
+#                to install lzfse.pyd. This is dependent on your version of python and platform
 # 
 # Purpose      : Parse the Spotlight store.db or .store.db file from mac OSX
 #                These files are located under:
 #                 /.Spotlight-V100/Store-V2/<UUID>/
 #
-#                Since 10.13, there are also spotlight databases for each user under
+#                Since macOS 10.13, there are also spotlight databases for each user under
 #                 ~/Library/Metadata/CoreSpotlight/index.spotlightV3/
 #
 # Usage        : spotlight_parser.py [-p OUTPUT_PREFIX] <path_to_database>  <output_folder>
@@ -49,7 +52,15 @@ import sys
 import logging
 from enum import IntEnum
 
-__VERSION__ = '0.8'
+lzfse_capable = False
+
+try:
+    import lzfse
+    lzfse_capable = True
+except ImportError:
+    print("lzfse not found. Won't decompress lzfse/lzvn streams")
+
+__VERSION__ = '0.9'
 
 log = logging.getLogger('SPOTLIGHT_PARSER')
 
@@ -96,7 +107,7 @@ class FileMetaDataListing:
                 mac_abs_time = old # preserve extra precision after decimal point
         try:
             return datetime.datetime(2001,1,1) + datetime.timedelta(seconds = mac_abs_time)
-        except:
+        except (ValueError, OverflowError, struct.error):
             pass
         return ""
     
@@ -104,7 +115,7 @@ class FileMetaDataListing:
         '''Convert Epoch microseconds timestamp to string'''
         try:
             return datetime.datetime(1970, 1, 1) + datetime.timedelta(seconds=value/1000000.)
-        except:
+        except OverflowError:
             pass
         return ""
     
@@ -198,11 +209,11 @@ class FileMetaDataListing:
             dashed_line = "-"*60
             info = u"Inode_Num --> {}\r\nFlags --> {}\r\nStore_ID --> {}\r\nParent_Inode_Num --> {}\r\nLast_Updated --> {}\r\n".format(self.id, self.flags, self.item_id, self.parent_id, self.ConvertEpochToUtcDateStr(self.date_updated))
 
-            file.write((dashed_line + '\r\n' + info).encode('utf-8'))
+            file.write((dashed_line + '\r\n' + info).encode('utf-8', 'backslashreplace'))
             for k, v in sorted(self.meta_data_dict.items()):
                 orig_debug = v
                 v = self.StringifyValue(v)
-                file.write((k + u" --> " + v).encode('utf-8'))
+                file.write((k + u" --> " + v).encode('utf-8', 'backslashreplace'))
                 file.write(b'\r\n')
         except Exception as ex:
             log.exception("Exception trying to print data : ")
@@ -277,6 +288,13 @@ class FileMetaDataListing:
                             log.info('Unknown value {} found for value_type 7, prop_type 0x42, prop_name {}'.format(value, prop_name))
                     else:
                         value = self.ReadVarSizeNum()[0]
+                elif value_type == 8 and prop_name != 'kMDStoreAccumulatedSizes':
+                    if prop_type & 2 == 2:
+                        num_values = (self.ReadVarSizeNum()[0])
+                        singles = [self.ReadSingleByte() for x in range(num_values)]
+                        value = singles
+                    else:
+                        value = self.ReadSingleByte()
                 elif value_type == 9:
                     if prop_type & 2 == 2:
                         num_values = (self.ReadVarSizeNum()[0])//4
@@ -334,7 +352,7 @@ class FileMetaDataListing:
                                 value = 'error getting index_2 for value {}'.format(old_value)
                             else:
                                 for v in value:
-                                    cat = categories.get(v, 'error getting category for index={}'.format(v))
+                                    cat = categories.get(v, 'error getting category for index={}  prop_type={}'.format(v, prop_type))
                                     all_translations = cat.split(b'\x16\x02')
                                     if len(all_translations) > 2:
                                         log.warning('Encountered more than one control sequence in single translation'
@@ -349,13 +367,13 @@ class FileMetaDataListing:
                             else:
                                 tree = []
                                 for v in value:
-                                    cat = categories.get(v, 'error getting category for index={}'.format(v))
+                                    cat = categories.get(v, 'error getting category for index={}  prop_type={}'.format(v, prop_type))
                                     tree.append(cat)
                                 value = tree
-                        elif prop_type & 8 == 8: #== 0x48: # ContentType
-                            value = categories.get(value, 'error getting category for index={}'.format(old_value))
-                        else:
-                            log.info("Not seen before value-type 0x0F item, prop_type={:X}, prop={}".format(prop_type, prop_name))
+                        else: #elif prop_type & 8 == 8: #== 0x48: # ContentType
+                            value = categories.get(value, 'error getting category for index={} prop_type={}'.format(old_value, prop_type))
+                        #else:
+                        #    log.info("Not seen before value-type 0x0F item, prop_type={:X}, prop={}".format(prop_type, prop_name))
                 else:
                     if prop_name != 'kMDStoreAccumulatedSizes':
                         log.info("Pos={}, Unknown value_type {}, PROPERTY={}, PROP_TYPE={} ..RETURNING!".format(filepos, value_type, prop_name, prop_type))
@@ -411,6 +429,30 @@ class StoreBlock:
         self.next_block_index = struct.unpack("<I", data[20:24])[0]
         self.unknown1 = struct.unpack("<I", data[24:28])[0]
         self.unknown2 = struct.unpack("<I", data[28:32])[0]
+
+class DbStrMapHeader:
+    def __init__(self):
+        self.sig = None
+        self.unk1 = 0
+        self.unk2 = 0
+        self.unk3 = 0
+        self.next_free_location_in_map_data = 0
+        self.unk5 = 0
+        self.next_data_id_number = 0
+        self.unk7 = 0
+        self.unk8 = 0
+        self.unk9 = 0
+        self.num_deleted_entries = 0
+        self.unk10 = 0
+        self.unk11 = 0
+
+    def Parse(self, data):
+        self.sig, self.unk1, self.unk2, self.unk3, self.next_free_location_in_map_data, \
+        self.unk5, self.next_data_id_number, self.unk7, self.unk8, self.unk9, \
+        self.num_deleted_entries, self.unk11, self.unk12 = struct.unpack("<Q12I", data[0:56])
+        if self.sig != 0x0000446174615000:
+            log.warning("Header signature is different for DbStrMapHeader. Sig=0x{:X}".format(self.sig))
+
 
 class SpotlightStore:
     def __init__(self, file_pointer):
@@ -505,6 +547,42 @@ class SpotlightStore:
             return num, extra + 1
         return first_byte, extra + 1
 
+    def ReadOffsets(self, offsets_content):
+        ''' Read offsets and index information from dbStr-x.map.offsets file data.
+            Returns list of lists [ [index, offset], [index, offset], .. ]
+        '''
+        offsets_len = len(offsets_content)
+        pos = 4
+        index = 1
+        offsets = [] # [ [index, offset], [index, offset], ..]
+        while pos < offsets_len:
+            off = struct.unpack("<I", offsets_content[pos:pos + 4])[0]
+            if off == 0:
+                break
+            elif off != 1: # 1 is invalid (deleted)
+                offsets.append([index, off])
+            index += 1
+            pos += 4
+        return offsets
+
+    def ParsePropertiesFromFileData(self, data_content, offsets_content, header_content):
+        data_len = len(data_content)
+        header_len = len(header_content)
+
+        header = DbStrMapHeader()
+        header.Parse(header_content)               
+        
+        # Parse offsets file
+        offsets = self.ReadOffsets(offsets_content)
+        
+        # Parse data file
+        data_version = struct.unpack("<H", data_content[0:2])
+        for index, offset in offsets:
+            entry_size, bytes_moved = SpotlightStore.ReadVarSizeNum(data_content[offset:])
+            value_type, prop_type = struct.unpack("<BB", data_content[offset + bytes_moved : offset + bytes_moved + 2])
+            name = data_content[offset + bytes_moved + 2:offset + bytes_moved + entry_size].split(b'\x00')[0]
+            self.properties[index] = [name.decode('utf-8', 'backslashreplace'), prop_type, value_type]
+
     def ParseProperties(self, block):
         data = block.data
         pos = 32
@@ -515,6 +593,23 @@ class SpotlightStore:
             name = data[pos:pos+size].split(b'\x00')[0]
             pos += len(name) + 1 if len(name) < size else size
             self.properties[index] = [name.decode('utf-8', 'backslashreplace'), prop_type, value_type]
+
+    def ParseCategoriesFromFileData(self, data_content, offsets_content, header_content):
+        data_len = len(data_content)
+        header_len = len(header_content)
+
+        header = DbStrMapHeader()
+        header.Parse(header_content)               
+        
+        # Parse offsets file
+        offsets = self.ReadOffsets(offsets_content)
+        
+        # Parse data file
+        data_version = struct.unpack("<H", data_content[0:2])
+        for index, offset in offsets:
+            entry_size, bytes_moved = SpotlightStore.ReadVarSizeNum(data_content[offset:])
+            name = data_content[offset + bytes_moved:offset + bytes_moved + entry_size].split(b'\x00')[0]
+            self.categories[index] = name.decode('utf-8', 'backslashreplace')
 
     def ParseCategories(self, block):
         data = block.data
@@ -531,6 +626,35 @@ class SpotlightStore:
                 log.error("Error, category {} already exists!!".format(temp))
             # end check
             self.categories[index] = name
+
+    def ParseIndexesFromFileData(self, data_content, offsets_content, header_content, dictionary):
+        data_len = len(data_content)
+        header_len = len(header_content)
+
+        header = DbStrMapHeader()
+        header.Parse(header_content)               
+        
+        # Parse offsets file
+        offsets = self.ReadOffsets(offsets_content)
+        
+        # Parse data file
+        data_version = struct.unpack("<H", data_content[0:2])
+        pos = 0
+        for index, offset in offsets:
+            pos = offset
+            entry_size, bytes_moved = SpotlightStore.ReadVarSizeNum(data_content[pos:])
+            pos += bytes_moved
+            index_size, bytes_moved = SpotlightStore.ReadVarSizeNum(data_content[pos:])
+            pos += bytes_moved
+
+            index_size = 4*int(index_size//4)
+            ids = struct.unpack("<" + str(index_size//4) + "I", data_content[pos:pos + index_size])
+            # sanity check
+            temp = dictionary.get(index, None)
+            if temp != None:
+                log.error("Error, category {} already exists!!".format(temp))
+            # end check
+            dictionary[index] = ids
 
     def ParseIndexes(self, block, dictionary):
         data = block.data
@@ -614,6 +738,28 @@ class SpotlightStore:
                             header = block_data[chunk_start:chunk_start + 4]
                     else:
                         uncompressed = lz4.block.decompress(block_data[20:compressed_block.logical_size], compressed_block.unknown - 20)
+                elif compressed_block.block_type & 0x2000 == 0x2000: # LZFSE compression seen, also perhaps LZVN
+                    if not lzfse_capable:
+                        log.error('LZFSE library not available for LZFSE decompression, skipping block..')
+                        continue
+                    if block_data[20:23] == b'bvx':
+                        # check for header (bvx1 or bvx2 or bvxn) and footer (bvx$)
+                        chunk_start = 20 # bvx offset
+                        uncompressed = b''
+                        header = block_data[chunk_start:chunk_start + 4]    
+                        log.debug("0x{:X} - {}".format(chunk_start, header))
+                        if header in [b'bvx1', b'bvx2', b'bvxn']:
+                            uncompressed_size = struct.unpack('<I', block_data[chunk_start + 4:chunk_start + 8])[0]
+                            uncompressed = lzfse.decompress(block_data[chunk_start : compressed_block.logical_size])
+                            if len(uncompressed) != uncompressed_size:
+                                log.error('Decompressed size does not match stored value, DecompSize={}, Should_be={}'.format(len(uncompressed), uncompressed_size))
+                        elif header == b'bvx-':
+                            uncompressed_size = struct.unpack('<I', block_data[chunk_start + 4:chunk_start + 8])[0]
+                            uncompressed = block_data[chunk_start + 8:chunk_start + 8 + uncompressed_size]
+                        else:
+                            log.warning('Unknown compression value @ 0x{:X} - {}'.format(chunk_start, header))
+                    else:
+                        uncompressed = lz4.block.decompress(block_data[20:compressed_block.logical_size], compressed_block.unknown - 20)
                 else: # zlib compression
                     #compressed_size = compressed_block.logical_size - 20
                     uncompressed = zlib.decompress(block_data[20:compressed_block.logical_size])
@@ -634,7 +780,7 @@ class SpotlightStore:
                     if items_to_compare and self.ItemExistsInDictionary(items_to_compare, md_item): pass # if md_item exists in compare_dict, skip it, else add
                     else:
                         items_in_block.append(md_item)
-                        name = md_item.GetFileName()
+                        name = md_item.GetFileName().decode('utf-8')
                         existing_item = items.get(md_item.id, None)
                         if existing_item != None:
                             log.warning('Item already present id={}, name={}, existing_name={}'.format(md_item.id, name, existing_item[2]))
@@ -678,18 +824,19 @@ class SpotlightStore:
                 raise Exception('Not the right block type, got {} instead of {} !!'.format(block.block_type, type))
             self.ProcessBlock(block, dictionary)
 
-    def ReadBlocksInSeq(self):
-        '''Reads blocks by following next_block variables, that's how spotlight would read it'''
+    def ReadPageIndexesAndOtherDefinitions(self, only_read_block_0=False):
+        '''Reads block zero that lists page indexes, then reads properties, categories and indexes'''
 
         self.Seek(self.header_size)
         block0_data = self.ReadFromFile(self.block0_size)
         self.block0 = StoreBlock0(block0_data)
-            
-        self.ParseBlockSequence(self.index_blocktype_11, BlockType.PROPERTY, self.properties)
-        self.ParseBlockSequence(self.index_blocktype_21, BlockType.CATEGORY, self.categories)
-        self.ParseBlockSequence(self.index_blocktype_81_1, BlockType.INDEX, self.indexes_1)
-        self.ParseBlockSequence(self.index_blocktype_81_2, BlockType.INDEX, self.indexes_2)
-        self.ParseBlockSequence(self.index_blocktype_41, BlockType.UNKNOWN_41, None)
+        
+        if not only_read_block_0:
+            self.ParseBlockSequence(self.index_blocktype_11, BlockType.PROPERTY, self.properties)
+            self.ParseBlockSequence(self.index_blocktype_21, BlockType.CATEGORY, self.categories)
+            self.ParseBlockSequence(self.index_blocktype_81_1, BlockType.INDEX, self.indexes_1)
+            self.ParseBlockSequence(self.index_blocktype_81_2, BlockType.INDEX, self.indexes_2)
+            self.ParseBlockSequence(self.index_blocktype_41, BlockType.UNKNOWN_41, None)
         
     def ReadBlocksNoSeq(self):
         '''Reads all blocks as is, without consideration for sequence,, may miss or exclude some data or may read invalid data, if its a deleted chunk??'''
@@ -739,11 +886,34 @@ def RecursiveGetFullPath(item, items_list):
         ret_path = '..NOT-FOUND../' + name
     return ret_path
 
+def GetFileData(path):
+    data = b''
+    with open(path, 'rb') as f:
+        data = f.read()
+    return data
+
+def GetMapDataOffsetHeader(input_folder, id):
+    ''' Given an id X, this returns the data from 3 files, 
+        dbStr-X.map.data, dbStr-X.map.header, dbStr-X.map.offsets. It will
+        search for these files in the input_folder.
+        Returns tuple (data, offsets, header)
+    '''
+    data_path = os.path.join(input_folder, 'dbStr-{}.map.data'.format(id))
+    offsets_path = os.path.join(input_folder, 'dbStr-{}.map.offsets'.format(id))
+    header_path = os.path.join(input_folder, 'dbStr-{}.map.header'.format(id))
+
+    map_data = GetFileData(data_path)
+    offsets_data = GetFileData(offsets_path)
+    header_data = GetFileData(header_path)
+
+    return (map_data, offsets_data, header_data)
+
 def ProcessStoreDb(input_file_path, output_path, file_name_prefix='store'):
     '''Main processing function'''
 
     items = {}
     time_processing_started = time.time()
+    create_full_paths_output_file = True
 
     output_path_full_paths = os.path.join(output_folder, file_name_prefix + '_fullpaths.csv')
     output_path_data = os.path.join(output_folder, file_name_prefix + '_data.txt')
@@ -753,23 +923,57 @@ def ProcessStoreDb(input_file_path, output_path, file_name_prefix='store'):
         f = open(input_file_path, 'rb')
 
         store = SpotlightStore(f)
-        store.ReadBlocksInSeq()
+        if store.flags & 0x00010000 == 0x00010000:
+             create_full_paths_output_file = False
+             log.info('This appears to be either an iOS spotlight db or a user spotlight db. '\
+                 "File inode numbers are not stored here, and hence full_path file won't be created!")
+        # check if needs other files
+        if store.index_blocktype_11 == 0: # The properties, categories and indexes must be stored in external files
+            # Find and parse files
+            input_folder = os.path.dirname(os.path.abspath(input_file_path))
+            data_path = os.path.join(input_folder, 'dbStr-1.map.data')
+            if os.path.isfile(data_path):
+                try:
+                    prop_map_data, prop_map_offsets,prop_map_header = GetMapDataOffsetHeader(input_folder, 1)
+                    cat_map_data, cat_map_offsets, cat_map_header = GetMapDataOffsetHeader(input_folder, 2)
+                    idx_1_map_data, idx_1_map_offsets, idx_1_map_header = GetMapDataOffsetHeader(input_folder, 4)
+                    idx_2_map_data, idx_2_map_offsets, idx_2_map_header = GetMapDataOffsetHeader(input_folder, 5)
+
+                    store.ParsePropertiesFromFileData(prop_map_data, prop_map_offsets, prop_map_header)
+                    store.ParseCategoriesFromFileData(cat_map_data, cat_map_offsets, cat_map_header)
+                    store.ParseIndexesFromFileData(idx_1_map_data, idx_1_map_offsets, idx_1_map_header, store.indexes_1)
+                    store.ParseIndexesFromFileData(idx_2_map_data, idx_2_map_offsets, idx_2_map_header, store.indexes_2)
+
+                    store.ReadPageIndexesAndOtherDefinitions(True)
+                except:
+                    log.exception('Failed to find or process one or more dependency files. Cannot proceed!')
+                    f.close()
+                    return
+            else:
+                log.error('Did not find file dbStr-1.map.data in the same folder as store.db. In order to parse this file' + 
+                          ' please also have all files that begin with dbStr* in the same location as store.db. It will ' +  
+                          ' be in the same folder where you found store.db')
+                f.close()
+                return
+        else:
+            store.ReadPageIndexesAndOtherDefinitions()
 
         log.info("Creating output file {}".format(output_path_data))
 
         with open(output_path_data, 'wb') as output_file:
             store.ParseMetadataBlocks(output_file, items, None, None)
 
-        log.info("Creating output file {}".format(output_path_full_paths))
+        if create_full_paths_output_file:
+            log.info("Creating output file {}".format(output_path_full_paths))
 
-        with open(output_path_full_paths, 'wb') as output_paths_file:
-            output_paths_file.write("Inode_Number\tFull_Path\r\n".encode('utf-8'))
-            for k, v in items.items():
-                name = v[2]
-                if name:
-                    fullpath = RecursiveGetFullPath(v, items)
-                    to_write = str(k) + '\t' + fullpath + '\r\n'
-                    output_paths_file.write(to_write.encode('utf-8'))
+            with open(output_path_full_paths, 'wb') as output_paths_file:
+                output_paths_file.write("Inode_Number\tFull_Path\r\n".encode('utf-8'))
+                for k, v in items.items():
+                    name = v[2]
+                    if name:
+                        fullpath = RecursiveGetFullPath(v, items)
+                        to_write = str(k) + '\t' + fullpath + '\r\n'
+                        output_paths_file.write(to_write.encode('utf-8', 'backslashreplace'))
 
     except Exception as ex:
         log.exception('')
