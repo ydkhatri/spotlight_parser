@@ -5,7 +5,7 @@ This code reads and extracts data from spotlight databases on macOS and iOS.
 GPL v3
 
 ## Dependencies  
-The code needs python (2.7 or 3.6+) and the following python packages installed:
+The code needs python 3.7 and the following python packages installed:
 
 * lz4
 * enum34
