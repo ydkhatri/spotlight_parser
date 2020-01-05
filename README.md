@@ -5,7 +5,11 @@ This code reads and extracts data from spotlight databases on macOS and iOS.
 GPL v3
 
 ## Dependencies
+<<<<<<< HEAD
 The code needs python 3.7, and the following python packages installed:
+=======
+The code needs python (2.7 or 3.6+) and the following python packages installed:
+>>>>>>> e8675b03a516af6d9c7c936982862f8cfbd35f34
 * lz4
 * enum34
 * lzfse
@@ -30,4 +34,8 @@ Example:
 `python spotlight_parser.py c:\spot\store c:\output`
 
 ## Thanks
+<<<<<<< HEAD
 Mason Bartle for porting the code to python3 earlier.
+=======
+Mason Bartle for porting the code to python3.
+>>>>>>> e8675b03a516af6d9c7c936982862f8cfbd35f34
