@@ -17,12 +17,12 @@
 #
 # Script Name  : spotlight_parser.py
 # Author       : Yogesh Khatri
-# Last Updated : 05/18/2019
-# Requirement  : Python (2 or 3) and modules ( lz4, enum34 )
+# Last Updated : 04/01/2019
+# Requirement  : Python 3.7, modules ( lz4, enum34 ) and lzfse library
 #                Dependencies can be installed using the command 'pip install lz4 enum34' 
 #                You will also need to install the lzfse decompression library. Follow the 
 #                instructions here (https://github.com/ydkhatri/mac_apt/tree/master/Libraries_For_Windows)
-#                to install lzfse.pyd. This is dependent on your version of python and platform
+#                to install lzfse.pyd. This is dependent on your version of python and platform.
 # 
 # Purpose      : Parse the Spotlight store.db or .store.db file from mac OSX
 #                These files are located under:
@@ -31,15 +31,22 @@
 #                Since macOS 10.13, there are also spotlight databases for each user under
 #                 ~/Library/Metadata/CoreSpotlight/index.spotlightV3/
 #
+#                iOS Spotlight databases are found at location
+#                /private/var/mobile/Library/Spotlight/CoreSpotlight/***/index.spotlightV2
+#                where *** is one of NSFileProtectionComplete, NSFileProtectionCompleteUnlessOpen or
+#                NSFileProtectionCompleteUntilFirstUserAuthentication. For iOS databases, you
+#                will need to have the files that begin with 'dbStr' (which are available 
+#                in the same folder as store.db. These files are specific to that instance
+#                of store.db. Ideally, just extract the whole folder instead of just the single
+#                store.db file. 
+#
 # Usage        : spotlight_parser.py [-p OUTPUT_PREFIX] <path_to_database>  <output_folder>
 #                Example:  python.exe spotlight_parser.py c:\store  c:\store_output
 #
 # Ack          : M Bartle for most of the python3 porting
 #
-# Send bugs and feedback to yogesh@swiftforensics.com
+# Feedback     : Send bugs and feedback to yogesh@swiftforensics.com
 #
-
-from __future__ import print_function
 
 import zlib
 import lz4.block
@@ -78,13 +85,6 @@ class FileMetaDataListing:
         self.parent_id = 0 # inode for parent folder
         self.date_updated = None
         self.full_path = ''
-
-    def convertPython3FloatStringToPython2(self, num):
-        """ Try to keep formatting consistent between Python 2 and Python 3 """
-        if num == int(num):
-            return "{:.1f}".format(num)
-        else:
-            return "{:.12g}".format(num)
        
     def ReadFloat(self):
         num = struct.unpack("<f", self.data[self.pos : self.pos + 4])[0]
@@ -125,7 +125,7 @@ class FileMetaDataListing:
         self.pos += bytes_read
         return num, bytes_read
 
-    def ReadStr(self):
+    def ReadStr(self, dont_decode=False):
         '''Returns single string of data and bytes_read'''
         size, pos = self.ReadVarSizeNum()
         string = self.data[self.pos:self.pos + size]
@@ -134,14 +134,19 @@ class FileMetaDataListing:
         if string.endswith(b'\x16\x02'):
             string = string[:-2]
         self.pos += size
-        return string, size + pos
+        if dont_decode:
+            return string, size + pos
+        return string.decode('utf8', "backslashreplace"), size + pos
 
-    def ReadStrings(self):
+    def ReadStrings(self, dont_decode=False):
         '''Returns array of strings found in data and bytes_read'''
         size, pos = self.ReadVarSizeNum()
         all_strings_in_one = self.data[self.pos:self.pos+size]
         strings = [x for x in all_strings_in_one.split(b'\x00') if x != b'']
-        strings = [x[:-2] if x.endswith(b'\x16\x02') else x for x in strings]
+        if dont_decode:
+            strings = [x[:-2] if x.endswith(b'\x16\x02') else x for x in strings]
+        else:
+            strings = [x[:-2].decode('utf8', "backslashreplace") if x.endswith(b'\x16\x02') else x.decode('utf8', "backslashreplace") for x in strings]
         self.pos += size
         return strings, size + pos
 
@@ -167,17 +172,17 @@ class FileMetaDataListing:
 
     def GetFileName(self):
         if self.meta_data_dict.get('_kStoreMetadataVersion', None) != None: # plist, not metadata
-            return b'------PLIST------'
+            return '------PLIST------'
         name = self.meta_data_dict.get('_kMDItemFileName', None)
         if name == None:
             name = self.meta_data_dict.get('kMDItemDisplayName')
         if name:
             if type(name) == list:
                 name = name[0]
-            if b'\x16\x02' in name:
-                name = name.split(b'\x16\x02')[0]
+            if '\x16\x02' in name:
+                name = name.split('\x16\x02')[0]
         else:
-            name = b'------NONAME------'
+            name = '------NONAME------'
         return name
 
     def StringifyValue(self, v):
@@ -185,35 +190,32 @@ class FileMetaDataListing:
             if v:
                 if len(v) == 1:
                     v = v[0]
-                    if type(v) == float:
-                        v = self.convertPython3FloatStringToPython2(v)
                 else:
-                    if type(v[0]) == float:
-                        v = ', '.join([self.convertPython3FloatStringToPython2(x) for x in v])
-                    elif type(v[0]) not in (bytes, str):
+                    if type(v[0]) == bytes:
+                        print("Well")
+                    if type(v[0]) != str:
                         v = ', '.join([str(x) for x in v])
                     else:
-                        v = b', '.join(v)
+                        v = ', '.join(v)
             else:
-                v = b''
-        elif type(v) == float:
-            v = self.convertPython3FloatStringToPython2(v)
+                v = ''
+
         if type(v) not in (bytes, str):
             v = str(v)
         if type(v) == bytes:
-            v = v.decode('utf-8')
+            v = v.decode('utf-8', 'backslashreplace')
         return v
 
     def Print(self, file):
         try:
             dashed_line = "-"*60
-            info = u"Inode_Num --> {}\r\nFlags --> {}\r\nStore_ID --> {}\r\nParent_Inode_Num --> {}\r\nLast_Updated --> {}\r\n".format(self.id, self.flags, self.item_id, self.parent_id, self.ConvertEpochToUtcDateStr(self.date_updated))
+            info = "Inode_Num --> {}\r\nFlags --> {}\r\nStore_ID --> {}\r\nParent_Inode_Num --> {}\r\nLast_Updated --> {}\r\n".format(self.id, self.flags, self.item_id, self.parent_id, self.ConvertEpochToUtcDateStr(self.date_updated))
 
             file.write((dashed_line + '\r\n' + info).encode('utf-8', 'backslashreplace'))
             for k, v in sorted(self.meta_data_dict.items()):
                 orig_debug = v
                 v = self.StringifyValue(v)
-                file.write((k + u" --> " + v).encode('utf-8', 'backslashreplace'))
+                file.write((k + " --> " + v).encode('utf-8', 'backslashreplace'))
                 file.write(b'\r\n')
         except Exception as ex:
             log.exception("Exception trying to print data : ")
@@ -227,7 +229,6 @@ class FileMetaDataListing:
         return struct.unpack("<i", struct.pack("<I", unsigned_num))[0]
 
     def ParseItem(self, properties, categories, indexes_1, indexes_2):
-        #global  debug_prop_types
         self.id = self.ConvertUint64ToSigned(self.ReadVarSizeNum()[0])
         self.flags = self.ReadSingleByte()
         self.item_id = self. ConvertUint64ToSigned(self.ReadVarSizeNum()[0])
@@ -329,10 +330,10 @@ class FileMetaDataListing:
                         value = self.ReadDate()
                 elif value_type == 0x0E:
                     if prop_type & 2 == 2:
-                        value = self.ReadStrings()[0]
+                        value = self.ReadStrings(dont_decode=True if prop_name != 'kMDStoreProperties' else False)[0]
                     else:
-                        value = self.ReadStr()[0]
-                    if prop_name != u'kMDStoreProperties':
+                        value = self.ReadStr(dont_decode=True if prop_name != 'kMDStoreProperties' else False)[0]
+                    if prop_name != 'kMDStoreProperties':
                         if type(value) == list:
                             if len(value) == 1:
                                 value = binascii.hexlify(value[0]).decode('ascii').upper()
@@ -352,13 +353,17 @@ class FileMetaDataListing:
                                 value = 'error getting index_2 for value {}'.format(old_value)
                             else:
                                 for v in value:
-                                    cat = categories.get(v, 'error getting category for index={}  prop_type={}'.format(v, prop_type))
-                                    all_translations = cat.split(b'\x16\x02')
-                                    if len(all_translations) > 2:
-                                        log.warning('Encountered more than one control sequence in single translation'
-                                                    'string.')
-                                        log.debug('Found this list: {}', other)
-                                    value = all_translations[0]
+                                    if v < 0: continue
+                                    cat = categories.get(v, None)
+                                    if cat == None:
+                                        log.error('error getting category for index={}  prop_type={}  prop_name={}'.format(v, prop_type, prop_name))
+                                    else:
+                                        all_translations = cat.split(b'\x16\x02')
+                                        if len(all_translations) > 2:
+                                            log.warning('Encountered more than one control sequence in single translation'
+                                                        'string.')
+                                            log.debug('Found this list: {}', other)
+                                        value = all_translations[0].decode('utf8', 'backslashreplace')
                                     break # only get first, rest are language variants!
                         elif prop_type & 0x2 == 0x2: #== 0x4A: # ContentTypeTree ItemUserTags
                             value = indexes_1.get(value, None)
@@ -367,11 +372,23 @@ class FileMetaDataListing:
                             else:
                                 tree = []
                                 for v in value:
-                                    cat = categories.get(v, 'error getting category for index={}  prop_type={}'.format(v, prop_type))
-                                    tree.append(cat)
+                                    if v < 0: continue
+                                    cat = categories.get(v, None)
+                                    if cat == None:
+                                        log.error('error getting category for index={}  prop_type={}  prop_name={}'.format(v, prop_type, prop_name))
+                                    else:
+                                        tree.append(cat.decode('utf8', 'backslashreplace'))
                                 value = tree
                         else: #elif prop_type & 8 == 8: #== 0x48: # ContentType
-                            value = categories.get(value, 'error getting category for index={} prop_type={}'.format(old_value, prop_type))
+                            if value >= 0:
+                                cat = categories.get(value, None)
+                                if cat == None:
+                                    log.error('error getting category for index={}  prop_type={}  prop_name={}'.format(v, prop_type, prop_name))
+                                else:
+                                    value = cat
+                                value = value.decode('utf8', 'backslashreplace')
+                            else:
+                                value = ''
                         #else:
                         #    log.info("Not seen before value-type 0x0F item, prop_type={:X}, prop={}".format(prop_type, prop_name))
                 else:
@@ -609,7 +626,7 @@ class SpotlightStore:
         for index, offset in offsets:
             entry_size, bytes_moved = SpotlightStore.ReadVarSizeNum(data_content[offset:])
             name = data_content[offset + bytes_moved:offset + bytes_moved + entry_size].split(b'\x00')[0]
-            self.categories[index] = name.decode('utf-8', 'backslashreplace')
+            self.categories[index] = name
 
     def ParseCategories(self, block):
         data = block.data
@@ -627,7 +644,7 @@ class SpotlightStore:
             # end check
             self.categories[index] = name
 
-    def ParseIndexesFromFileData(self, data_content, offsets_content, header_content, dictionary):
+    def ParseIndexesFromFileData(self, data_content, offsets_content, header_content, dictionary, has_extra_byte=False):
         data_len = len(data_content)
         header_len = len(header_content)
 
@@ -646,9 +663,11 @@ class SpotlightStore:
             pos += bytes_moved
             index_size, bytes_moved = SpotlightStore.ReadVarSizeNum(data_content[pos:])
             pos += bytes_moved
+            if has_extra_byte:
+                pos += 1
 
             index_size = 4*int(index_size//4)
-            ids = struct.unpack("<" + str(index_size//4) + "I", data_content[pos:pos + index_size])
+            ids = struct.unpack("<" + str(index_size//4) + "i", data_content[pos:pos + index_size])
             # sanity check
             temp = dictionary.get(index, None)
             if temp != None:
@@ -670,7 +689,7 @@ class SpotlightStore:
             pos += padding
 
             index_size = 4*int(index_size//4)
-            ids = struct.unpack("<" + str(index_size//4) + "I", data[pos:pos + index_size])
+            ids = struct.unpack("<" + str(index_size//4) + "i", data[pos:pos + index_size])
             pos += index_size
             
             # sanity check
@@ -780,7 +799,7 @@ class SpotlightStore:
                     if items_to_compare and self.ItemExistsInDictionary(items_to_compare, md_item): pass # if md_item exists in compare_dict, skip it, else add
                     else:
                         items_in_block.append(md_item)
-                        name = md_item.GetFileName().decode('utf-8')
+                        name = md_item.GetFileName()
                         existing_item = items.get(md_item.id, None)
                         if existing_item != None:
                             log.warning('Item already present id={}, name={}, existing_name={}'.format(md_item.id, name, existing_item[2]))
@@ -793,7 +812,7 @@ class SpotlightStore:
                                     if existing_item[2] != name:
                                         log.warning("Repeat item has different name, existing={}, new={}".format(existing_item[2], name))
                         else: # Not adding repeat elements
-                            items[md_item.id] = [md_item.id, md_item.parent_id, md_item.GetFileName().decode('utf-8'), None, md_item.date_updated] # id, parent_id, name, path, date
+                            items[md_item.id] = [md_item.id, md_item.parent_id, md_item.GetFileName(), None, md_item.date_updated] # id, parent_id, name, path, date
                 except:
                     log.exception('Error trying to process item @ block {:X} offset {}'.format(index[1] * 0x1000 + 20, pos))
                 pos += item_size + 4
@@ -942,7 +961,7 @@ def ProcessStoreDb(input_file_path, output_path, file_name_prefix='store'):
                     store.ParsePropertiesFromFileData(prop_map_data, prop_map_offsets, prop_map_header)
                     store.ParseCategoriesFromFileData(cat_map_data, cat_map_offsets, cat_map_header)
                     store.ParseIndexesFromFileData(idx_1_map_data, idx_1_map_offsets, idx_1_map_header, store.indexes_1)
-                    store.ParseIndexesFromFileData(idx_2_map_data, idx_2_map_offsets, idx_2_map_header, store.indexes_2)
+                    store.ParseIndexesFromFileData(idx_2_map_data, idx_2_map_offsets, idx_2_map_header, store.indexes_2, has_extra_byte=True)
 
                     store.ReadPageIndexesAndOtherDefinitions(True)
                 except:
@@ -991,7 +1010,14 @@ if __name__ == "__main__":
                   "are found under the volume at location '/.Spotlight-V100/Store-V2/<UUID>' "\
                   "where <UUID> represents a store id. In that folder you should find files "\
                   "named 'store' and '.store' which are the Spotlight databases. Provide these "\
-                  "as input to this script. "  
+                  "as input to this script. \n\n"\
+                  "iOS Spotlight databases are found at location "\
+                  "/private/var/mobile/Library/Spotlight/CoreSpotlight/***/index.spotlightV2 where "\
+                  "*** is one of NSFileProtectionComplete, NSFileProtectionCompleteUnlessOpen or "\
+                  "NSFileProtectionCompleteUntilFirstUserAuthentication.\n"\
+                  "For iOS databases, you will need to have the files that begin with 'dbStr' in "\
+                  "the same folder as store.db. These files will be present in the same folder as store.db "\
+                  "and are specific to that instance of store.db. Send bugs/comments to yogesh@swiftforensics.com "
 
     arg_parser = argparse.ArgumentParser(description='Spotlight Parser version {} - {}'.format(__VERSION__, description))
     arg_parser.add_argument('input_path', help="Path to 'store' or '.store' file (the Spotlight db)")
