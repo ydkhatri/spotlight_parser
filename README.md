@@ -1,5 +1,5 @@
 # spotlight_parser
-This code reads and extracts data from spotlight databases on macOS and iOS.  
+This code reads and extracts data from spotlight databases present on macOS and iOS.  
 
 ## License
 GPL v3
