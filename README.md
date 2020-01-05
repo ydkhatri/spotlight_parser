@@ -13,7 +13,7 @@ The code needs python 3.7 and the following python packages installed:
 
 The first two can be installed using the command `pip install lz4 enum34`
 
-You will also need to install the lzfse decompression library. Follow the instructions [here](https://github.com/ydkhatri/mac_apt/tree/master/Libraries_For_Windows) to install it on windows.  
+You will also need to install the lzfse decompression library. Follow the instructions [here](https://github.com/ydkhatri/mac_apt/tree/master/Libraries_For_Windows) to install it on windows. For linux, follow this [link](https://github.com/ydkhatri/mac_apt/wiki/Installation-for-Python3.7#build-compile-and-install-pylzfse) and only complete the **install pylzfse** part.  
 ## Usage
 This script will process individual Spotlight database files. These files are found under the volume at location `/.Spotlight-V100/Store-V2/<UUID>` where `<UUID>` represents a store id. In that folder you should find files named `store` and `.store` which are the Spotlight databases. Provide these as input to this script.
 
