@@ -4,8 +4,11 @@ This code reads and extracts data from spotlight databases on macOS and iOS.
 ## License
 GPL v3
 
+## Latest version
+0.9 - Download (here)[https://github.com/ydkhatri/spotlight_parser/releases]
+
 ## Dependencies  
-The code needs python 3.7 and the following python packages installed:
+If running from code, you will need python 3.7 and the following python packages installed:
 
 * lz4
 * enum34
