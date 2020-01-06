@@ -1,11 +1,14 @@
 # spotlight_parser
-This code reads and extracts data from spotlight databases on macOS and iOS.  
+This code reads and extracts data from spotlight databases present on macOS and iOS.  
 
 ## License
 GPL v3
 
+## Latest version
+0.9 - Download [here](https://github.com/ydkhatri/spotlight_parser/releases)
+
 ## Dependencies  
-The code needs python 3.7 and the following python packages installed:
+If running from code, you will need python 3.7 and the following python packages installed:
 
 * lz4
 * enum34
@@ -13,7 +16,7 @@ The code needs python 3.7 and the following python packages installed:
 
 The first two can be installed using the command `pip install lz4 enum34`
 
-You will also need to install the lzfse decompression library. Follow the instructions [here](https://github.com/ydkhatri/mac_apt/tree/master/Libraries_For_Windows) to install it on windows.  
+You will also need to install the lzfse decompression library. Follow the instructions [here](https://github.com/ydkhatri/mac_apt/tree/master/Libraries_For_Windows) to install it on windows. For linux, follow this [link](https://github.com/ydkhatri/mac_apt/wiki/Installation-for-Python3.7#build-compile-and-install-pylzfse) and only complete the **install pylzfse** part.  
 ## Usage
 This script will process individual Spotlight database files. These files are found under the volume at location `/.Spotlight-V100/Store-V2/<UUID>` where `<UUID>` represents a store id. In that folder you should find files named `store` and `.store` which are the Spotlight databases. Provide these as input to this script.
 
