@@ -5,7 +5,7 @@ This code reads and extracts data from spotlight databases present on macOS and 
 GPL v3
 
 ## Latest version
-0.9 - Download [here](https://github.com/ydkhatri/spotlight_parser/releases)
+0.9.1 - Download [here](https://github.com/ydkhatri/spotlight_parser/releases)
 
 ## Dependencies  
 If running from code, you will need python 3.7 and the following python packages installed:
