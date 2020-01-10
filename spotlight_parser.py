@@ -274,19 +274,21 @@ class FileMetaDataListing:
                 elif value_type == 6: 
                     value = self.ReadVarSizeNum()[0] 
                 elif value_type == 7:
-                    if prop_type == 0x42: #66 com_apple_mail_gmailLabels, com_microsoft_outlook_categories
-                        #unknown encoding (varint) type!
-                        value = self.ReadSingleByte()
-                        if value == 0x08:   # Read 1 more byte
-                            value += (self.ReadSingleByte() << 8)
-                        elif value == 0x10: # Read 2 more bytes
-                            value += (self.ReadSingleByte() << 8) + (self.ReadSingleByte() << 16)
-                        elif value == 0x18: # Read 3 more bytes
-                            value += (self.ReadSingleByte() << 8) + (self.ReadSingleByte() << 16) + (self.ReadSingleByte() << 24)
-                        else:
-                            log.info('Unknown value {} found for value_type 7, prop_type 0x42, prop_name {}'.format(value, prop_name))
+                    log.debug("Found value_type 7, prop_type=0x{:X} prop={} @ {}, pos 0x{:X}".format(prop_type, prop_name, filepos, self.pos))
+                    if prop_type & 2 == 2: #  == 0x0A:
+                        number = self.ReadVarSizeNum()[0]
+                        num_values = number >> 3
+                        value = [self.ReadVarSizeNum()[0] for x in range(num_values)]
+                        discarded_bits = number & 0x07
+                        if discarded_bits != 0:
+                            log.info('Discarded bits value was 0x{:X}'.format(discarded_bits))
                     else:
+                        # 0x48 (_kMDItemDataOwnerType, _ICItemSearchResultType, kMDItemRankingHint, FPCapabilities)
+                        # 0x4C (_kMDItemStorageSize, _kMDItemApplicationImporterVersion)
+                        # 0x0a (_kMDItemOutgoingCounts, _kMDItemIncomingCounts) firstbyte = 0x20 , then 4 bytes
                         value = self.ReadVarSizeNum()[0]
+                    #if prop_type == 0x48: # Can perhaps be resolved to a category? Need to check.
+                    #    print("") 
                 elif value_type == 8 and prop_name != 'kMDStoreAccumulatedSizes':
                     if prop_type & 2 == 2:
                         num_values = (self.ReadVarSizeNum()[0])
