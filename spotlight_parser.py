@@ -41,7 +41,7 @@
 #                store.db file. 
 #
 # Usage        : spotlight_parser.py [-p OUTPUT_PREFIX] <path_to_database>  <output_folder>
-#                Example:  python.exe spotlight_parser.py c:\store  c:\store_output
+#                Example:  python.exe spotlight_parser.py c:\store.db  c:\store_output
 #
 # Ack          : M Bartle for most of the python3 porting
 #
@@ -1021,20 +1021,22 @@ def ProcessStoreDb(input_file_path, output_path, file_name_prefix='store'):
 if __name__ == "__main__":
     import argparse
 
-    description = "This script will process individual Spotlight database files. These files "\
-                  "are found under the volume at location '/.Spotlight-V100/Store-V2/<UUID>' "\
-                  "where <UUID> represents a store id. In that folder you should find files "\
-                  "named 'store' and '.store' which are the Spotlight databases. Provide these "\
-                  "as input to this script. \n\n"\
-                  "iOS Spotlight databases are found at location "\
-                  "/private/var/mobile/Library/Spotlight/CoreSpotlight/***/index.spotlightV2 where "\
-                  "*** is one of NSFileProtectionComplete, NSFileProtectionCompleteUnlessOpen or "\
-                  "NSFileProtectionCompleteUntilFirstUserAuthentication.\n"\
-                  "For iOS databases, you will need to have the files that begin with 'dbStr' in "\
-                  "the same folder as store.db. These files will be present in the same folder as store.db "\
-                  "and are specific to that instance of store.db. Send bugs/comments to yogesh@swiftforensics.com "
+    description = "This script will process individual Spotlight database files.\n"\
+                    "These files are found under the volume at location \n "\
+                    "'/.Spotlight-V100/Store-V2/<UUID>' where <UUID> represents a store id.\n"\
+                    "In that folder you should find files named 'store' and '.store' which\n"\
+                    "are the Spotlight databases. Provide these as input to this script. \n\n"\
+                    "iOS Spotlight databases (store.db and .store.db) are found at locations:\n"\
+                    "/private/var/mobile/Library/Spotlight/CoreSpotlight/***/index.spotlightV2\n"\
+                    "where *** is one of NSFileProtectionComplete, NSFileProtectionCompleteUnlessOpen\n"\
+                    "or NSFileProtectionCompleteUntilFirstUserAuthentication folders.\n\n"\
+                    "For iOS databases, you will need to have the files that begin with 'dbStr'\n"\
+                    "in the same folder as store.db. These files will natively be found in the\n"\
+                    "same folder as store.db and are specific to that instance of store.db.\n\n"\
+                    "Example:  python.exe spotlight_parser.py c:\store.db  c:\store_output\n\n"\
+                    "Send bugs/comments to yogesh@swiftforensics.com "
 
-    arg_parser = argparse.ArgumentParser(description='Spotlight Parser version {} - {}'.format(__VERSION__, description))
+    arg_parser = argparse.ArgumentParser(description='Spotlight Parser version {} - {}'.format(__VERSION__, description), formatter_class=argparse.RawTextHelpFormatter)
     arg_parser.add_argument('input_path', help="Path to 'store' or '.store' file (the Spotlight db)")
     arg_parser.add_argument('output_folder', help='Path to output folder')
     arg_parser.add_argument('-p', '--output_prefix', help='Prefix for output file names')
