@@ -31,7 +31,7 @@ For iOS databases, you will also need to have the files that begin with `dbStr` 
 in the same folder as store.db). These files are specific to that instance of store.db. Ideally, just extract the whole folder (instead of a single file). 
 
 Example:  
-`python spotlight_parser.py c:\spot\store c:\output`
+`python spotlight_parser.py c:\spot\store.db c:\output`
 
 ## Thanks  
 Mason Bartle for porting the code to python3.
