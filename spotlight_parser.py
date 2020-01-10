@@ -67,7 +67,7 @@ try:
 except ImportError:
     print("lzfse not found. Won't decompress lzfse/lzvn streams")
 
-__VERSION__ = '0.9'
+__VERSION__ = '0.9.1'
 
 log = logging.getLogger('SPOTLIGHT_PARSER')
 
@@ -525,7 +525,19 @@ class SpotlightStore:
 
     def ReadUint64(self, data):
         return struct.unpack("<Q", data)[0]
-    
+
+    @staticmethod
+    def ReadIndexVarSizeNum(data):
+        '''Returns num and bytes_read'''
+        byte = struct.unpack("B", data[0:1])[0]
+        num_bytes_read = 1
+        ret = byte & 0x7F # remove top bit
+        while (byte & 0x80) == 0x80: # highest bit set, need to read one more
+            byte = struct.unpack("B", data[num_bytes_read:num_bytes_read + 1])[0]
+            ret |= (byte & 0x7F) << (7 * num_bytes_read)
+            num_bytes_read += 1
+        return ret, num_bytes_read
+
     @staticmethod
     def ReadVarSizeNum(data):
         '''Returns num and bytes_read'''
@@ -657,10 +669,15 @@ class SpotlightStore:
         pos = 0
         for index, offset in offsets:
             pos = offset
-            entry_size, bytes_moved = SpotlightStore.ReadVarSizeNum(data_content[pos:])
+            entry_size, bytes_moved = SpotlightStore.ReadIndexVarSizeNum(data_content[pos:])
             pos += bytes_moved
             index_size, bytes_moved = SpotlightStore.ReadVarSizeNum(data_content[pos:])
             pos += bytes_moved
+            if entry_size - index_size > 2:
+                log.debug("ReadIndexVarSizeNum() read the number incorrectly?") 
+            else:
+                log.debug("index={}, offset={}, entry_size=0x{:X}, index_size=0x{:X}".format(index, offset, entry_size, index_size))
+
             if has_extra_byte:
                 pos += 1
 
