@@ -17,12 +17,9 @@
 #
 # Script Name  : spotlight_parser.py
 # Author       : Yogesh Khatri
-# Last Updated : 04/01/2019
-# Requirement  : Python 3.7, modules ( lz4, enum34 ) and lzfse library
-#                Dependencies can be installed using the command 'pip install lz4 enum34' 
-#                You will also need to install the lzfse decompression library. Follow the 
-#                instructions here (https://github.com/ydkhatri/mac_apt/tree/master/Libraries_For_Windows)
-#                to install lzfse.pyd. This is dependent on your version of python and platform.
+# Last Updated : 08/07/2020
+# Requirement  : Python 3.7, modules ( lz4, pyliblzfse )
+#                Dependencies can be installed using the command 'pip install lz4 pyliblzfse' 
 # 
 # Purpose      : Parse the Spotlight store.db or .store.db file from mac OSX
 #                These files are located under:
@@ -62,10 +59,10 @@ from enum import IntEnum
 lzfse_capable = False
 
 try:
-    import lzfse
+    import liblzfse
     lzfse_capable = True
 except ImportError:
-    print("lzfse not found. Won't decompress lzfse/lzvn streams")
+    print("liblzfse not found. Won't decompress lzfse/lzvn streams")
 
 __VERSION__ = '0.9.1'
 
@@ -215,7 +212,7 @@ class FileMetaDataListing:
                 v = self.StringifyValue(v)
                 file.write((k + " --> " + v).encode('utf-8', 'backslashreplace'))
                 file.write(b'\r\n')
-        except Exception as ex:
+        except (UnicodeEncodeError, ValueError, TypeError) as ex:
             log.exception("Exception trying to print data : ")
 
     def ConvertUint64ToSigned(self, unsigned_num):
@@ -274,11 +271,11 @@ class FileMetaDataListing:
                 elif value_type == 6: 
                     value = self.ReadVarSizeNum()[0] 
                 elif value_type == 7:
-                    log.debug("Found value_type 7, prop_type=0x{:X} prop={} @ {}, pos 0x{:X}".format(prop_type, prop_name, filepos, self.pos))
+                    #log.debug("Found value_type 7, prop_type=0x{:X} prop={} @ {}, pos 0x{:X}".format(prop_type, prop_name, filepos, self.pos))
                     if prop_type & 2 == 2: #  == 0x0A:
-                        number = self.ReadVarSizeNum()[0]
+                        number = self.ConvertUint64ToSigned(self.ReadVarSizeNum()[0])
                         num_values = number >> 3
-                        value = [self.ReadVarSizeNum()[0] for x in range(num_values)]
+                        value = [self.ConvertUint64ToSigned(self.ReadVarSizeNum()[0]) for x in range(num_values)]
                         discarded_bits = number & 0x07
                         if discarded_bits != 0:
                             log.info('Discarded bits value was 0x{:X}'.format(discarded_bits))
@@ -286,7 +283,7 @@ class FileMetaDataListing:
                         # 0x48 (_kMDItemDataOwnerType, _ICItemSearchResultType, kMDItemRankingHint, FPCapabilities)
                         # 0x4C (_kMDItemStorageSize, _kMDItemApplicationImporterVersion)
                         # 0x0a (_kMDItemOutgoingCounts, _kMDItemIncomingCounts) firstbyte = 0x20 , then 4 bytes
-                        value = self.ReadVarSizeNum()[0]
+                        value = self.ConvertUint64ToSigned(self.ReadVarSizeNum()[0])
                     #if prop_type == 0x48: # Can perhaps be resolved to a category? Need to check.
                     #    print("") 
                 elif value_type == 8 and prop_name != 'kMDStoreAccumulatedSizes':
@@ -489,7 +486,7 @@ class SpotlightStore:
         self.index_blocktype_41 = self.ReadUint(self.header[56:60])
         self.index_blocktype_81_1 = self.ReadUint(self.header[60:64])
         self.index_blocktype_81_2 = self.ReadUint(self.header[64:68])
-        self.original_path = self.header[0x144:0x244].decode('utf-8').rstrip('\0') # 256 bytes
+        self.original_path = self.header[0x144:0x244].decode('utf-8', 'backslashreplace').rstrip('\0') # 256 bytes
         self.file_size = self.GetFileSize(self.file)
 
         self.properties = {}
@@ -677,8 +674,8 @@ class SpotlightStore:
             pos += bytes_moved
             if entry_size - index_size > 2:
                 log.debug("ReadIndexVarSizeNum() read the number incorrectly?") 
-            else:
-                log.debug("index={}, offset={}, entry_size=0x{:X}, index_size=0x{:X}".format(index, offset, entry_size, index_size))
+            #else:
+            #    log.debug("index={}, offset={}, entry_size=0x{:X}, index_size=0x{:X}".format(index, offset, entry_size, index_size))
 
             if has_extra_byte:
                 pos += 1
@@ -776,7 +773,7 @@ class SpotlightStore:
                         uncompressed = lz4.block.decompress(block_data[20:compressed_block.logical_size], compressed_block.unknown - 20)
                 elif compressed_block.block_type & 0x2000 == 0x2000: # LZFSE compression seen, also perhaps LZVN
                     if not lzfse_capable:
-                        log.error('LZFSE library not available for LZFSE decompression, skipping block..')
+                        log.error('LIBLZFSE library not available for LZFSE decompression, skipping block..')
                         continue
                     if block_data[20:23] == b'bvx':
                         # check for header (bvx1 or bvx2 or bvxn) and footer (bvx$)
@@ -786,7 +783,7 @@ class SpotlightStore:
                         log.debug("0x{:X} - {}".format(chunk_start, header))
                         if header in [b'bvx1', b'bvx2', b'bvxn']:
                             uncompressed_size = struct.unpack('<I', block_data[chunk_start + 4:chunk_start + 8])[0]
-                            uncompressed = lzfse.decompress(block_data[chunk_start : compressed_block.logical_size])
+                            uncompressed = liblzfse.decompress(block_data[chunk_start : compressed_block.logical_size])
                             if len(uncompressed) != uncompressed_size:
                                 log.error('Decompressed size does not match stored value, DecompSize={}, Should_be={}'.format(len(uncompressed), uncompressed_size))
                         elif header == b'bvx-':
@@ -799,7 +796,7 @@ class SpotlightStore:
                 else: # zlib compression
                     #compressed_size = compressed_block.logical_size - 20
                     uncompressed = zlib.decompress(block_data[20:compressed_block.logical_size])
-            except Exception as ex:
+            except (ValueError,  lz4.block.LZ4BlockError, liblzfse.error) as ex:
                 log.error("Decompression error for block @ 0x{:X}\r\n{}".format(index[1] * 0x1000 + 20, str(ex)))
                 if len(uncompressed) == 0: continue
             
