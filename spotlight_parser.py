@@ -17,7 +17,7 @@
 #
 # Script Name  : spotlight_parser.py
 # Author       : Yogesh Khatri
-# Last Updated : 08/07/2020
+# Last Updated : 12/28/2020
 # Requirement  : Python 3.7, modules ( lz4, pyliblzfse )
 #                Dependencies can be installed using the command 'pip install lz4 pyliblzfse' 
 # 
@@ -64,7 +64,7 @@ try:
 except ImportError:
     print("liblzfse not found. Won't decompress lzfse/lzvn streams")
 
-__VERSION__ = '0.9.1'
+__VERSION__ = '0.9.2'
 
 log = logging.getLogger('SPOTLIGHT_PARSER')
 
@@ -341,7 +341,10 @@ class FileMetaDataListing:
                 elif value_type == 0x0F:
                     value = self.ConvertUint32ToSigned(self.ReadVarSizeNum()[0])
                     if value < 0:
-                        value = 'INVALID ({})'.format(value)
+                        if value == -16777217:
+                            value = ''
+                        else:
+                            value = 'INVALID ({})'.format(value)
                     else:
                         old_value = value
                         if prop_type & 3 == 3: # in (0x83, 0xC3, 0x03): # ItemKind
@@ -353,7 +356,8 @@ class FileMetaDataListing:
                                     if v < 0: continue
                                     cat = categories.get(v, None)
                                     if cat == None:
-                                        log.error('error getting category for index={}  prop_type={}  prop_name={}'.format(v, prop_type, prop_name))
+                                        #log.error('error getting category for index={}  prop_type={}  prop_name={}'.format(v, prop_type, prop_name))
+                                        value = ''
                                     else:
                                         all_translations = cat.split(b'\x16\x02')
                                         if len(all_translations) > 2:
@@ -361,7 +365,7 @@ class FileMetaDataListing:
                                                         'string.')
                                             log.debug('Found this list: {}', other)
                                         value = all_translations[0].decode('utf8', 'backslashreplace')
-                                    break # only get first, rest are language variants!
+                                        break # only get first, rest are language variants!
                         elif prop_type & 0x2 == 0x2: #== 0x4A: # ContentTypeTree ItemUserTags
                             value = indexes_1.get(value, None)
                             if value == None:
@@ -381,6 +385,7 @@ class FileMetaDataListing:
                                 cat = categories.get(value, None)
                                 if cat == None:
                                     log.error('error getting category for index={}  prop_type={}  prop_name={}'.format(v, prop_type, prop_name))
+                                    value = ''
                                 else:
                                     value = cat
                                 value = value.decode('utf8', 'backslashreplace')
@@ -494,6 +499,8 @@ class SpotlightStore:
         self.indexes_1 = {}
         self.indexes_2 = {}
         self.block0 = None
+
+        self.is_ios_store = self.index_blocktype_11 == 0
 
     def GetFileSize(self, file):
         '''Return size from an open file handle'''
@@ -735,10 +742,16 @@ class SpotlightStore:
         return False
 
     def ParseMetadataBlocks(self, output_file, items, items_to_compare=None, process_items_func=None):
+        '''Parses block, return number of items written (after deduplication if items_to_compare!=None)'''
         # Index = [last_id_in_block, offset_index, dest_block_size]
+        total_items_written = 0
         for index in self.block0.indexes:
             #go to offset and parse
-            self.Seek(index[1] * 0x1000)
+            seek_offset = index[1] * 0x1000
+            if seek_offset >= self.file_size:
+                log.error(f'File may be truncated, index seeks ({seek_offset}) outside file size ({self.file_size})!')
+                continue
+            self.Seek(seek_offset)
             block_data = self.ReadFromFile(self.block_size)
             compressed_block = StoreBlock(block_data)
             if compressed_block.block_type & 0xFF != BlockType.METADATA:
@@ -813,6 +826,7 @@ class SpotlightStore:
                     if items_to_compare and self.ItemExistsInDictionary(items_to_compare, md_item): pass # if md_item exists in compare_dict, skip it, else add
                     else:
                         items_in_block.append(md_item)
+                        total_items_written += 1
                         name = md_item.GetFileName()
                         existing_item = items.get(md_item.id, None)
                         if existing_item != None:
@@ -833,10 +847,12 @@ class SpotlightStore:
                 count += 1
 
             if process_items_func:
-                process_items_func(items_in_block)
+                process_items_func(items_in_block, self.is_ios_store)
 
             for md_item in items_in_block:
                 md_item.Print(output_file)
+                
+        return total_items_written
 
     def ParseBlockSequence(self, initial_index, type, dictionary):
         '''Follow the sequence of next_block_index to parse all blocks in the chain'''
@@ -956,12 +972,11 @@ def ProcessStoreDb(input_file_path, output_path, file_name_prefix='store'):
         f = open(input_file_path, 'rb')
 
         store = SpotlightStore(f)
-        if store.flags & 0x00010000 == 0x00010000:
-             create_full_paths_output_file = False
-             log.info('This appears to be either an iOS spotlight db or a user spotlight db. '\
-                 "File inode numbers are not stored here, and hence full_path file won't be created!")
-        # check if needs other files
-        if store.index_blocktype_11 == 0: # The properties, categories and indexes must be stored in external files
+        if store.is_ios_store: #store.flags & 0x00010000 == 0x00010000:
+            create_full_paths_output_file = False
+            log.info('This appears to be either an iOS spotlight db or a user spotlight db. '\
+                "File inode numbers are not stored here, and hence full_path file won't be created!")
+            # The properties, categories and indexes must be stored in external files
             # Find and parse files
             input_folder = os.path.dirname(os.path.abspath(input_file_path))
             data_path = os.path.join(input_folder, 'dbStr-1.map.data')
