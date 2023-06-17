@@ -5,7 +5,7 @@ This code reads and extracts data from spotlight databases present on macOS and 
 GPL v3
 
 ## Latest version
-0.9.2 - Download [here](https://github.com/ydkhatri/spotlight_parser/releases)
+1.0.2 - Download [here](https://github.com/ydkhatri/spotlight_parser/releases)
 
 _**It is recommended to use the mac_apt_artifact_only script/exe (from [mac_apt](https://github.com/ydkhatri/mac_apt)) instead of this project as that uses this same code, but also offers a few extra features like SQLITE output, and creating separate views for ios apps.**_
 
