@@ -134,7 +134,7 @@ class FileMetaDataListing:
     
     def ReadVarSizeNum(self):
         '''Returns num and bytes_read'''
-        num, bytes_read = SpotlightStore.ReadVarSizeNum(self.data[self.pos : min(self.size, 9 + self.size)])
+        num, bytes_read = SpotlightStore.ReadVarSizeNum(self.data[self.pos : self.size])
         self.pos += bytes_read
         return num, bytes_read
 
@@ -513,7 +513,7 @@ class FileMetaDataListing:
                             if value >= 0:
                                 cat = categories.get(value, None)
                                 if cat == None:
-                                    log.error('error getting category for index={}  prop_type={}  prop_name={}'.format(v, prop_type, prop_name))
+                                    log.error('error getting category for index={}  prop_type={}  prop_name={}'.format(value, prop_type, prop_name))
                                     value = b''
                                 else:
                                     value = cat
@@ -1257,6 +1257,8 @@ if __name__ == "__main__":
     arg_parser.add_argument('input_path', help="Path to 'store' or '.store' file (the Spotlight db)")
     arg_parser.add_argument('output_folder', help='Path to output folder')
     arg_parser.add_argument('-p', '--output_prefix', help='Prefix for output file names')
+    arg_parser.add_argument('-l', '--log_level', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'], default='DEBUG',
+                            help='Set the logging level (default: DEBUG)')
 
     args = arg_parser.parse_args()
 
@@ -1264,7 +1266,7 @@ if __name__ == "__main__":
     output_file_prefix = args.output_prefix if args.output_prefix else 'spotlight-store'
 
     # log
-    log_level = logging.DEBUG
+    log_level = getattr(logging, args.log_level.upper(), logging.DEBUG)
     log_console_handler = logging.StreamHandler()
     log_console_handler.setLevel(log_level)
     log_console_format  = logging.Formatter('%(levelname)s - %(message)s')
